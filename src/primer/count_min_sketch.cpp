@@ -13,6 +13,7 @@
 #include "primer/count_min_sketch.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -31,12 +32,12 @@ namespace bustub {
  * @throws std::invalid_argument if width or depth are zero.
  */
 template <typename KeyType>
-CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_(width), depth_(depth) {
+CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth)
+    : width_(width), depth_(depth), result_(width_ * depth_) {
   /** @TODO(student) Implement this function! */
   if (width_ == 0 || depth_ == 0) {
     throw std::invalid_argument("Invalid width or depth.");
   }
-  result_.resize(width_ * depth_, 0);
 
   /** @spring2026 PLEASE DO NOT MODIFY THE FOLLOWING */
   // Initialize seeded hash functions
@@ -50,7 +51,7 @@ template <typename KeyType>
 CountMinSketch<KeyType>::CountMinSketch(CountMinSketch &&other) noexcept : width_(other.width_), depth_(other.depth_) {
   /** @TODO(student) Implement this function! */
   hash_functions_ = std::move(other.hash_functions_);
-  result_ = std::move(other.result_);
+  result_.swap(other.result_);
 }
 
 template <typename KeyType>
@@ -59,7 +60,7 @@ auto CountMinSketch<KeyType>::operator=(CountMinSketch &&other) noexcept -> Coun
   width_ = other.width_;
   depth_ = other.depth_;
   hash_functions_ = std::move(other.hash_functions_);
-  result_ = std::move(other.result_);
+  result_.swap(other.result_);
   return *this;
 }
 
@@ -67,7 +68,7 @@ template <typename KeyType>
 void CountMinSketch<KeyType>::Insert(const KeyType &item) {
   /** @TODO(student) Implement this function! */
   for (decltype(depth_) i = 0; i < depth_; ++i) {
-    result_[GetIndex(i, hash_functions_[i](item))] += 1;
+    result_[GetIndex(i, hash_functions_[i](item))].fetch_add(1, std::memory_order_relaxed);
   }
 }
 
@@ -78,7 +79,8 @@ void CountMinSketch<KeyType>::Merge(const CountMinSketch<KeyType> &other) {
   }
   /** @TODO(student) Implement this function! */
   for (size_t index = 0, end = width_ * depth_; index < end; ++index) {
-    result_[index] += other.result_[index];
+    // result_[index] += other.result_[index];
+    result_[index].fetch_add(other.result_[index], std::memory_order_relaxed);
   }
 }
 
