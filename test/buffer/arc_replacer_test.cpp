@@ -20,7 +20,7 @@
 
 namespace bustub {
 
-TEST(ArcReplacerTest, DISABLED_SampleTest) {
+TEST(ArcReplacerTest, SampleTest) {
   // for the sake of simplicity
   // we use (a, fb) to notate page a on frame b,
   // (a, _) to mark ghost page with page id a
