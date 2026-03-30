@@ -17,12 +17,16 @@
 #include <memory>
 #include <mutex>  // NOLINT
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 
 #include "common/config.h"
 #include "common/macros.h"
 
 namespace bustub {
+
+constexpr bool DEBUG_MODE{true};
+constexpr std::string_view LOG_PATH{"log.log"};
 
 enum class AccessType { Unknown = 0, Lookup, Scan, Index };
 
@@ -34,6 +38,9 @@ struct FrameStatus {
   frame_id_t frame_id_;
   bool evictable_;
   ArcStatus arc_status_;
+  std::list<frame_id_t>::iterator alive_iterator_;
+  std::list<page_id_t>::iterator ghost_iterator_;
+
   FrameStatus(page_id_t pid, frame_id_t fid, bool ev, ArcStatus st)
       : page_id_(pid), frame_id_(fid), evictable_(ev), arc_status_(st) {}
 };
@@ -81,10 +88,12 @@ class ArcReplacer {
   /* p as in original paper */
   [[maybe_unused]] size_t mru_target_size_{0};
   /* c as in original paper */
-  [[maybe_unused]] size_t replacer_size_;
+  size_t replacer_size_;
   std::mutex latch_;
 
   // TODO(student): You can add member variables / functions as you like.
+  auto TryEvictFromList(const ArcStatus list_type) -> std::optional<frame_id_t>;
+  void Log(std::string_view msg);
 };
 
 }  // namespace bustub
