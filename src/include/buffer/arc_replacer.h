@@ -25,7 +25,7 @@
 
 namespace bustub {
 
-constexpr bool DEBUG_MODE{true};
+constexpr bool DEBUG_MODE{false};
 constexpr std::string_view LOG_PATH{"log.log"};
 
 enum class AccessType { Unknown = 0, Lookup, Scan, Index };
