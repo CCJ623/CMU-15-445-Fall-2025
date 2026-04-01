@@ -13,6 +13,8 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 
 #include "buffer/arc_replacer.h"
 #include "buffer/buffer_pool_manager.h"
@@ -122,6 +124,12 @@ class ReadPageGuard {
    * If you want extra (nonexistent) style points, and you want to be extra fancy, then you can look into the
    * `std::shared_lock` type and use that for the latching mechanism instead of manually calling `lock` and `unlock`.
    */
+  std::shared_lock<std::shared_mutex> latch_;
+
+  template <bool ShouldLock>
+  void increase_pin_count();
+
+  void decrease_pin_count();
 };
 
 /**
@@ -144,8 +152,8 @@ class WritePageGuard {
    * @brief The default constructor for a `WritePageGuard`.
    *
    * Note that we do not EVER want use a guard that has only been default constructed. The only reason we even define
-   * this default constructor is to enable placing an "uninitialized" guard on the stack that we can later move assign
-   * via `=`.
+   * this default constructor is to enable placing an "uninitialized" guard on the stack that we can later move
+   * assign via `=`.
    *
    * **Use of an uninitialized page guard is undefined behavior.**
    *
@@ -229,6 +237,14 @@ class WritePageGuard {
    * If you want extra (nonexistent) style points, and you want to be extra fancy, then you can look into the
    * `std::unique_lock` type and use that for the latching mechanism instead of manually calling `lock` and `unlock`.
    */
+  std::unique_lock<std::shared_mutex> latch_;
+
+  void flush();
+
+  template <bool ShouldLock>
+  void increase_pin_count();
+
+  void decrease_pin_count();
 };
 
 }  // namespace bustub
