@@ -131,7 +131,7 @@ auto BufferPoolManager::NewPage() -> page_id_t {
 
   auto frame_ptr = AllocateFrame(next_page_id_.fetch_add(1));
   if (frame_ptr == nullptr) {
-    throw std::out_of_range("Buffer Pool is full and no frame can be evicted");
+    return INVALID_PAGE_ID;
   }
 
   return frame_ptr->page_id_;
