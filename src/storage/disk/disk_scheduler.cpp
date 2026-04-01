@@ -57,7 +57,9 @@ void DiskScheduler::Schedule(std::vector<DiskRequest> &requests) {
 void DiskScheduler::StartWorkerThread() {
   while (true) {
     auto request = request_queue_.Get();
-    if (request == std::nullopt) return;
+    if (request == std::nullopt) {
+      return;
+    }
 
     if (request->is_write_) {
       disk_manager_->WritePage(request->page_id_, request->data_);

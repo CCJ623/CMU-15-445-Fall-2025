@@ -561,7 +561,7 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id) -> std::share
     requests.push_back(std::move(request));
     disk_scheduler_->Schedule(requests);
 
-    if (done.get() == false) {
+    if (!done.get()) {
       // IO error
       return nullptr;
     }
@@ -580,7 +580,7 @@ void BufferPoolManager::Flush(FrameHeader &frame) {
   request_vector.push_back(std::move(request));
   disk_scheduler_->Schedule(request_vector);
 
-  if (done.get() == false) {
+  if (!done.get()) {
     // disk error
     throw std::runtime_error("Flush failed");
   }
