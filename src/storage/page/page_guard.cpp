@@ -94,6 +94,13 @@ ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept
  * @return ReadPageGuard& The newly valid `ReadPageGuard`.
  */
 auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & {
+  if (this == &that) {
+    // self
+    return *this;
+  }
+
+  Drop();
+
   page_id_ = std::exchange(that.page_id_, decltype(page_id_){});
   frame_ = std::move(that.frame_);
   replacer_ = std::move(that.replacer_);
@@ -284,6 +291,13 @@ WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept
  * @return WritePageGuard& The newly valid `WritePageGuard`.
  */
 auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & {
+  if (this == &that) {
+    // self
+    return *this;
+  }
+
+  Drop();
+
   page_id_ = std::exchange(that.page_id_, decltype(page_id_){});
   frame_ = std::move(that.frame_);
   replacer_ = std::move(that.replacer_);
