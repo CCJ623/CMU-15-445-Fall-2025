@@ -14,6 +14,7 @@
 
 #include <list>
 #include <memory>
+#include <optional>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
@@ -71,6 +72,9 @@ class FrameHeader {
 
   /** @brief The frame ID / index of the frame this header represents. */
   const frame_id_t frame_id_;
+
+  /** @brief The page ID */
+  page_id_t page_id_;
 
   /** @brief The readers / writer latch for this frame. */
   std::shared_mutex rwlatch_;
@@ -171,5 +175,14 @@ class BufferPoolManager {
    * stored inside of it. Additionally, you may also want to implement a helper function that returns either a shared
    * pointer to a `FrameHeader` that already has a page's data stored inside of it, or an index to said `FrameHeader`.
    */
+  auto AllocateFrame(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
+
+  void DeallocateFrame(FrameHeader &frame);
+  void DeallocateFrame(frame_id_t frame_id);
+  void DeallocateFrameByPageID(page_id_t page_id);
+
+  auto FindFrameInMemory(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
+  auto FindPageInMemoryAndDisk(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
+  void Flush(FrameHeader &frame);
 };
 }  // namespace bustub
