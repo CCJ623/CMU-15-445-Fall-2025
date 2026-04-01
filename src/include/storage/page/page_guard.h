@@ -125,11 +125,6 @@ class ReadPageGuard {
    * `std::shared_lock` type and use that for the latching mechanism instead of manually calling `lock` and `unlock`.
    */
   std::shared_lock<std::shared_mutex> latch_;
-
-  template <bool ShouldLock>
-  void increase_pin_count();
-
-  void decrease_pin_count();
 };
 
 /**
@@ -240,11 +235,6 @@ class WritePageGuard {
   std::unique_lock<std::shared_mutex> latch_;
 
   void flush();
-
-  template <bool ShouldLock>
-  void increase_pin_count();
-
-  void decrease_pin_count();
 };
 
 }  // namespace bustub
