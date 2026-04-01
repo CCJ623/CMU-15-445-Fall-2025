@@ -228,15 +228,15 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
 auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_type) -> std::optional<WritePageGuard> {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
-  std::scoped_lock lock{*bpm_latch_};
-
+  std::unique_lock<std::mutex> lock{*bpm_latch_};
   auto frame_ptr = FindPageInMemoryAndDisk(page_id);
-
   if (frame_ptr == nullptr) {
     // not found or buffer full
     return std::nullopt;
   }
 
+  ++frame_ptr->pin_count_;
+  lock.unlock();
   return WritePageGuard{page_id, frame_ptr, replacer_, bpm_latch_, disk_scheduler_};
 }
 
@@ -267,15 +267,19 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
 auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_type) -> std::optional<ReadPageGuard> {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
-  std::scoped_lock lock{*bpm_latch_};
+  if (page_id == INVALID_PAGE_ID) {
+    return std::nullopt;
+  }
 
+  std::unique_lock<std::mutex> lock{*bpm_latch_};
   auto frame_ptr = FindPageInMemoryAndDisk(page_id);
-
   if (frame_ptr == nullptr) {
     // not found or buffer full
     return std::nullopt;
   }
 
+  ++frame_ptr->pin_count_;
+  lock.unlock();
   return ReadPageGuard{page_id, frame_ptr, replacer_, bpm_latch_, disk_scheduler_};
 }
 
