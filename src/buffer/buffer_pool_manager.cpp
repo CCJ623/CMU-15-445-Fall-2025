@@ -178,7 +178,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   }
 
   // not pinned
-  page_table_.erase(frame.frame_id_);
+  page_table_.erase(frame.page_id_);
   free_frames_.push_back(frame_ptr->frame_id_);
   replacer_->SetEvictable(frame.frame_id_, true);
   disk_scheduler_->DeallocatePage(frame.page_id_);
@@ -506,6 +506,8 @@ auto BufferPoolManager::AllocateFrame(page_id_t page_id) -> std::shared_ptr<Fram
     DeallocateFrame(*frame_id);
   }
 
+  BUSTUB_ASSERT(!free_frames_.empty(), "free_frames should not be empty");
+
   // buffer not full
   result = frames_[free_frames_.back()];
   free_frames_.pop_back();
@@ -539,6 +541,7 @@ auto BufferPoolManager::FindFrameInMemory(page_id_t page_id) -> std::shared_ptr<
     return nullptr;
   }
 
+  BUSTUB_ASSERT(0 <= iter->second && static_cast<size_t>(iter->second) < frames_.size(), "frame id out of range");
   return frames_[iter->second];
 }
 
