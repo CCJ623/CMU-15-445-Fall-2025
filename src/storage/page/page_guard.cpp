@@ -47,9 +47,6 @@ ReadPageGuard::ReadPageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> fra
       is_valid_(true),
       latch_(frame_->rwlatch_) {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
-
-  replacer_->RecordAccess(frame_->frame_id_, page_id_);
-  // increase_pin_count<false>();
 }
 
 /**
@@ -218,10 +215,6 @@ WritePageGuard::WritePageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> f
       is_valid_(true),
       latch_{frame_->rwlatch_} {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
-
-  replacer_->RecordAccess(frame_->frame_id_, page_id_);
-  // increase_pin_count<false>();
-  frame_->is_dirty_ = true;
 }
 
 /**

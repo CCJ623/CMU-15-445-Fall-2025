@@ -236,6 +236,9 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
   }
 
   ++frame_ptr->pin_count_;
+  frame_ptr->is_dirty_ = true;
+  replacer_->RecordAccess(frame_ptr->frame_id_, page_id);
+  replacer_->SetEvictable(frame_ptr->frame_id_, false);
   lock.unlock();
   return WritePageGuard{page_id, frame_ptr, replacer_, bpm_latch_, disk_scheduler_};
 }
@@ -279,6 +282,8 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
   }
 
   ++frame_ptr->pin_count_;
+  replacer_->RecordAccess(frame_ptr->frame_id_, page_id);
+  replacer_->SetEvictable(frame_ptr->frame_id_, false);
   lock.unlock();
   return ReadPageGuard{page_id, frame_ptr, replacer_, bpm_latch_, disk_scheduler_};
 }
