@@ -49,7 +49,7 @@ ReadPageGuard::ReadPageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> fra
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
   replacer_->RecordAccess(frame_->frame_id_, page_id_);
-  increase_pin_count<false>();
+  // increase_pin_count<false>();
 }
 
 /**
@@ -176,44 +176,20 @@ void ReadPageGuard::Drop() {
     return;
   }
 
+  is_valid_ = false;
+  latch_.unlock();
+
   {
     std::scoped_lock lock{*bpm_latch_};
     --frame_->pin_count_;
     if (frame_->pin_count_ == 0) {
       replacer_->SetEvictable(frame_->frame_id_, true);
     }
-    is_valid_ = false;
-    latch_.unlock();
   }
 }
 
 /** @brief The destructor for `ReadPageGuard`. This destructor simply calls `Drop()`. */
 ReadPageGuard::~ReadPageGuard() { Drop(); }
-
-template <bool ShouldLock>
-void ReadPageGuard::increase_pin_count() {
-  auto func = [this]() {
-    ++frame_->pin_count_;
-    if (frame_->pin_count_ == 1) {
-      replacer_->SetEvictable(frame_->frame_id_, false);
-    }
-  };
-
-  if constexpr (ShouldLock) {
-    std::scoped_lock lock{*bpm_latch_};
-    func();
-  } else {
-    func();
-  }
-}
-
-void ReadPageGuard::decrease_pin_count() {
-  std::scoped_lock lock{*bpm_latch_};
-  --frame_->pin_count_;
-  if (frame_->pin_count_ == 0) {
-    replacer_->SetEvictable(frame_->frame_id_, true);
-  }
-}
 
 /**********************************************************************************************************************/
 /**********************************************************************************************************************/
@@ -245,7 +221,7 @@ WritePageGuard::WritePageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> f
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
   replacer_->RecordAccess(frame_->frame_id_, page_id_);
-  increase_pin_count<false>();
+  // increase_pin_count<false>();
   frame_->is_dirty_ = true;
 }
 
@@ -374,9 +350,14 @@ void WritePageGuard::Drop() {
     frame_->is_dirty_ = false;
   }
 
-  decrease_pin_count();
   is_valid_ = false;
   latch_.unlock();
+
+  std::scoped_lock lock{*bpm_latch_};
+  --frame_->pin_count_;
+  if (frame_->pin_count_ == 0) {
+    replacer_->SetEvictable(frame_->frame_id_, true);
+  }
 }
 
 /** @brief The destructor for `WritePageGuard`. This destructor simply calls `Drop()`. */
@@ -396,31 +377,6 @@ void WritePageGuard::flush() {
   }
 
   frame_->is_dirty_ = false;
-}
-
-template <bool ShouldLock>
-void WritePageGuard::increase_pin_count() {
-  auto func = [this]() {
-    ++frame_->pin_count_;
-    if (frame_->pin_count_ == 1) {
-      replacer_->SetEvictable(frame_->frame_id_, false);
-    }
-  };
-
-  if constexpr (ShouldLock) {
-    std::scoped_lock lock{*bpm_latch_};
-    func();
-  } else {
-    func();
-  }
-}
-
-void WritePageGuard::decrease_pin_count() {
-  std::scoped_lock lock{*bpm_latch_};
-  --frame_->pin_count_;
-  if (frame_->pin_count_ == 0) {
-    replacer_->SetEvictable(frame_->frame_id_, true);
-  }
 }
 
 }  // namespace bustub
