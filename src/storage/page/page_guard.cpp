@@ -153,9 +153,8 @@ void ReadPageGuard::Flush() {
 
   if (done.get()) {
     return;
-  } else {
-    throw std::runtime_error("Flush failed");
   }
+  throw std::runtime_error("Flush failed");
 }
 
 /**
@@ -172,7 +171,7 @@ void ReadPageGuard::Flush() {
 void ReadPageGuard::Drop() {
   // NIMPLEMENTED("TODO(P1): Add implementation.");
 
-  if (is_valid_ == false) {
+  if (!is_valid_) {
     return;
   }
 
@@ -324,7 +323,7 @@ auto WritePageGuard::IsDirty() const -> bool {
  */
 void WritePageGuard::Flush() {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
-  flush();
+  FlushHelper();
 }
 
 /**
@@ -341,12 +340,12 @@ void WritePageGuard::Flush() {
 void WritePageGuard::Drop() {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
-  if (is_valid_ == false) {
+  if (!is_valid_) {
     return;
   }
 
   if (frame_->is_dirty_) {
-    flush();
+    FlushHelper();
     frame_->is_dirty_ = false;
   }
 
@@ -363,7 +362,7 @@ void WritePageGuard::Drop() {
 /** @brief The destructor for `WritePageGuard`. This destructor simply calls `Drop()`. */
 WritePageGuard::~WritePageGuard() { Drop(); }
 
-void WritePageGuard::flush() {
+void WritePageGuard::FlushHelper() {
   std::promise<bool> promise;
   auto done = promise.get_future();
   DiskRequest request{true, frame_->GetDataMut(), frame_->page_id_, std::move(promise)};
@@ -371,7 +370,7 @@ void WritePageGuard::flush() {
   request_vector.push_back(std::move(request));
   disk_scheduler_->Schedule(request_vector);
 
-  if (done.get() == false) {
+  if (!done.get()) {
     // disk error
     throw std::runtime_error("Flush failed");
   }

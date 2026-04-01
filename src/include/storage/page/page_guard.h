@@ -234,7 +234,7 @@ class WritePageGuard {
    */
   std::unique_lock<std::shared_mutex> latch_;
 
-  void flush();
+  void FlushHelper();
 };
 
 }  // namespace bustub
