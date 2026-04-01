@@ -72,11 +72,12 @@ auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
   Log(fmt::format("[Evict] Called. mru.size={}, mfu.size={}, mru_target={}, curr_size={}", mru_.size(), mfu_.size(),
                   mru_target_size_, curr_size_));
 
+  std::optional<frame_id_t> result;
   if (mru_.size() >= mru_target_size_) {
     Log("[Evict] mru.size >= mru_target: trying MRU first");
 
     // search evictable frame in mru
-    auto result = TryEvictFromList(ArcStatus::MRU);
+    result = TryEvictFromList(ArcStatus::MRU);
 
     if (result != std::nullopt) {
       Log(fmt::format("[Evict] Evicted frame {} from MRU", *result));
@@ -90,13 +91,11 @@ auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
     } else {
       Log("[Evict] No evictable frame found in either list");
     }
-    return result;
-
   } else {
     Log("[Evict] mru.size < mru_target: trying MFU first");
 
     // search evictable frame in mfu
-    auto result = TryEvictFromList(ArcStatus::MFU);
+    result = TryEvictFromList(ArcStatus::MFU);
 
     if (result != std::nullopt) {
       Log(fmt::format("[Evict] Evicted frame {} from MFU", *result));
@@ -110,8 +109,9 @@ auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
     } else {
       Log("[Evict] No evictable frame found in either list");
     }
-    return result;
   }
+
+  return result;
 }
 
 /**
@@ -307,7 +307,7 @@ void ArcReplacer::Remove(frame_id_t frame_id) {
 
   auto &frame = *iter->second;
 
-  if (iter->second->evictable_ == false) {
+  if (!iter->second->evictable_) {
     Log(fmt::format("[Remove] ERROR: frame_id={} is non-evictable, aborting", frame_id));
     throw std::logic_error("Attempted to remove a non-evictable frame!");
   }
@@ -348,7 +348,7 @@ auto ArcReplacer::Size() -> size_t {
   return curr_size_;
 }
 
-auto ArcReplacer::TryEvictFromList(const ArcStatus list_type) -> std::optional<frame_id_t> {
+auto ArcReplacer::TryEvictFromList(ArcStatus list_type) -> std::optional<frame_id_t> {
   if (list_type != ArcStatus::MRU && list_type != ArcStatus::MRU) {
   }
 
@@ -357,11 +357,11 @@ auto ArcReplacer::TryEvictFromList(const ArcStatus list_type) -> std::optional<f
       [this, list_type]() -> std::tuple<decltype(mru_) &, decltype(mru_ghost_) &, std::string_view, ArcStatus> {
     if (list_type == ArcStatus::MRU) {
       return {mru_, mru_ghost_, "MRU", ArcStatus::MRU_GHOST};
-    } else if (list_type == ArcStatus::MFU) {
-      return {mfu_, mfu_ghost_, "MFU", ArcStatus::MFU_GHOST};
-    } else {
-      throw std::runtime_error("Try evict from non-alive list");
     }
+    if (list_type == ArcStatus::MFU) {
+      return {mfu_, mfu_ghost_, "MFU", ArcStatus::MFU_GHOST};
+    }
+    throw std::runtime_error("Try evict from non-alive list");
   }();
 
   Log(fmt::format("[TryEvict] Scanning {} for evictable frame (list.size={})", alive_list_type_string,

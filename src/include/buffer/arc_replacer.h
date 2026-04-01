@@ -92,7 +92,7 @@ class ArcReplacer {
   std::mutex latch_;
 
   // TODO(student): You can add member variables / functions as you like.
-  auto TryEvictFromList(const ArcStatus list_type) -> std::optional<frame_id_t>;
+  auto TryEvictFromList(ArcStatus list_type) -> std::optional<frame_id_t>;
   void Log(std::string_view msg);
 };
 
