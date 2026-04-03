@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <stdexcept>
 #include <utility>
 #include "buffer/arc_replacer.h"
@@ -129,11 +130,15 @@ auto BufferPoolManager::NewPage() -> page_id_t {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
   std::scoped_lock lock{*bpm_latch_};
 
-  auto frame_ptr = AllocateFrame(next_page_id_.fetch_add(1));
+  // Peek the next page_id without consuming it yet.
+  page_id_t new_page_id = next_page_id_.load();
+  auto frame_ptr = AllocateFrame(new_page_id);
   if (frame_ptr == nullptr) {
     return INVALID_PAGE_ID;
   }
 
+  // Only increment after we successfully got a frame.
+  next_page_id_.fetch_add(1);
   return frame_ptr->page_id_;
 }
 
@@ -178,10 +183,11 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   }
 
   // not pinned
-  page_table_.erase(frame.page_id_);
-  free_frames_.push_back(frame_ptr->frame_id_);
-  replacer_->SetEvictable(frame.frame_id_, true);
   disk_scheduler_->DeallocatePage(frame.page_id_);
+  page_table_.erase(frame.page_id_);
+  replacer_->Remove(frame.frame_id_);
+  frame_ptr->Reset();
+  free_frames_.push_back(frame_ptr->frame_id_);
 
   return true;
 }
@@ -404,8 +410,10 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
     return false;
   }
 
-  WritePageGuard guard{page_id, frame_ptr, replacer_, bpm_latch_, disk_scheduler_};
-  guard.Flush();
+  std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_};
+  if (frame_ptr->is_dirty_) {
+    Flush(*frame_ptr);
+  }
 
   return true;
 }
@@ -455,8 +463,10 @@ void BufferPoolManager::FlushAllPages() {
 
   for (const auto &pair : page_table_) {
     auto frame_ptr = frames_[pair.second];
-    WritePageGuard guard{frame_ptr->page_id_, frame_ptr, replacer_, bpm_latch_, disk_scheduler_};
-    guard.Flush();
+    std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_};
+    if (frame_ptr->is_dirty_) {
+      Flush(*frame_ptr);
+    }
   }
 }
 
