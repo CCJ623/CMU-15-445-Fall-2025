@@ -534,6 +534,11 @@ auto BufferPoolManager::AllocateFrame(page_id_t page_id) -> std::shared_ptr<Fram
 void BufferPoolManager::DeallocateFrame(FrameHeader &frame) {
   BUSTUB_ASSERT(frame.pin_count_ == 0, "try to deallocate frame which is pinned");
 
+  if (frame.is_dirty_) {
+    Flush(frame);
+    frame.is_dirty_ = false;
+  }
+
   page_table_.erase(frame.page_id_);
   frame.Reset();
   free_frames_.push_back(frame.frame_id_);

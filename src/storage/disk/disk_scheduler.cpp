@@ -22,7 +22,7 @@ namespace bustub {
 DiskScheduler::DiskScheduler(DiskManager *disk_manager) : disk_manager_(disk_manager) {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
   //  Spawn the background thread
-  background_thread_.emplace([&] { StartWorkerThread(); });
+  background_thread_.emplace([this] { StartWorkerThread(); });
 }
 
 DiskScheduler::~DiskScheduler() {
