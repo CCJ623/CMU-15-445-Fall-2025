@@ -247,3 +247,5 @@ docs/dev
 
 # LLM Stuff
 .aider*
+
+build-asan/

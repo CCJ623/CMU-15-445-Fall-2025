@@ -337,11 +337,6 @@ void WritePageGuard::Drop() {
     return;
   }
 
-  if (frame_->is_dirty_) {
-    FlushHelper();
-    frame_->is_dirty_ = false;
-  }
-
   is_valid_ = false;
   latch_.unlock();
 
