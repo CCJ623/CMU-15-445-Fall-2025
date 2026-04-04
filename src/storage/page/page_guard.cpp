@@ -298,6 +298,7 @@ auto WritePageGuard::GetData() const -> const char * {
  */
 auto WritePageGuard::GetDataMut() -> char * {
   BUSTUB_ENSURE(is_valid_, "tried to use an invalid write guard");
+  frame_->is_dirty_ = true;
   return frame_->GetDataMut();
 }
 
@@ -336,6 +337,8 @@ void WritePageGuard::Drop() {
   if (!is_valid_) {
     return;
   }
+
+  frame_->is_dirty_ = true;
 
   is_valid_ = false;
   latch_.unlock();
