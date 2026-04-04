@@ -128,17 +128,18 @@ auto BufferPoolManager::Size() const -> size_t { return num_frames_; }
  */
 auto BufferPoolManager::NewPage() -> page_id_t {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
-  std::scoped_lock lock{*bpm_latch_};
+  std::unique_lock<std::mutex> lock{*bpm_latch_};
 
-  // Peek the next page_id without consuming it yet.
-  page_id_t new_page_id = next_page_id_.load();
-  auto frame_ptr = AllocateFrame(new_page_id);
+  auto frame_ptr = AllocateFrame(lock);
   if (frame_ptr == nullptr) {
     return INVALID_PAGE_ID;
   }
 
   // Only increment after we successfully got a frame.
-  next_page_id_.fetch_add(1);
+  page_id_t new_page_id = next_page_id_.fetch_add(1);
+  frame_ptr->page_id_ = new_page_id;
+  page_table_[new_page_id] = frame_ptr->frame_id_;
+
   return frame_ptr->page_id_;
 }
 
@@ -402,7 +403,7 @@ auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool {
 auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
-  std::scoped_lock lock{*bpm_latch_};
+  std::unique_lock<std::mutex> lock{*bpm_latch_};
 
   auto frame_ptr = FindFrameInMemory(page_id);
   if (frame_ptr == nullptr) {
@@ -410,10 +411,20 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
     return false;
   }
 
+  // protect frame
+  ++frame_ptr->pin_count_;
+  // release bpm lock FIRST
+  lock.unlock();
+
   std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_};
   if (frame_ptr->is_dirty_) {
+    // wait for flush
     Flush(*frame_ptr);
   }
+  frame_lock.unlock();
+
+  lock.lock();
+  --frame_ptr->pin_count_;
 
   return true;
 }
@@ -459,14 +470,27 @@ void BufferPoolManager::FlushAllPagesUnsafe() {
 void BufferPoolManager::FlushAllPages() {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
-  std::scoped_lock lock{*bpm_latch_};
+  std::unique_lock<std::mutex> lock{*bpm_latch_};
+  std::vector<std::shared_ptr<FrameHeader>> to_flush;
 
   for (const auto &pair : page_table_) {
     auto frame_ptr = frames_[pair.second];
+    ++frame_ptr->pin_count_;
+    to_flush.push_back(frame_ptr);
+  }
+
+  lock.unlock();
+
+  for (auto &frame_ptr : to_flush) {
     std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_};
     if (frame_ptr->is_dirty_) {
       Flush(*frame_ptr);
     }
+  }
+
+  lock.lock();
+  for (auto &frame_ptr : to_flush) {
+    --frame_ptr->pin_count_;
   }
 }
 
@@ -508,9 +532,10 @@ auto BufferPoolManager::GetPinCount(page_id_t page_id) -> std::optional<size_t> 
   return frame_ptr->pin_count_;
 }
 
-auto BufferPoolManager::AllocateFrame(page_id_t page_id) -> std::shared_ptr<FrameHeader> {
+auto BufferPoolManager::AllocateFrame(std::unique_lock<std::mutex> &bpm_lock) -> std::shared_ptr<FrameHeader> {
   std::shared_ptr<FrameHeader> result;
-  if (free_frames_.empty()) {
+
+  while (free_frames_.empty()) {
     // buffer full
     // try evict
     auto frame_id = replacer_->Evict();
@@ -518,7 +543,9 @@ auto BufferPoolManager::AllocateFrame(page_id_t page_id) -> std::shared_ptr<Fram
       return nullptr;
     }
 
-    DeallocateFrame(*frame_id);
+    if (DeallocateFrame(*frame_id, bpm_lock)) {
+      break;
+    }
   }
 
   BUSTUB_ASSERT(!free_frames_.empty(), "free_frames should not be empty");
@@ -526,33 +553,65 @@ auto BufferPoolManager::AllocateFrame(page_id_t page_id) -> std::shared_ptr<Fram
   // buffer not full
   result = frames_[free_frames_.back()];
   free_frames_.pop_back();
-  result->page_id_ = page_id;
-  page_table_[result->page_id_] = result->frame_id_;
   return result;
 }
 
-void BufferPoolManager::DeallocateFrame(FrameHeader &frame) {
+auto BufferPoolManager::DeallocateFrame(FrameHeader &frame, std::unique_lock<std::mutex> &bpm_lock) -> bool {
   BUSTUB_ASSERT(frame.pin_count_ == 0, "try to deallocate frame which is pinned");
 
   if (frame.is_dirty_) {
-    Flush(frame);
+    // pin to prevent another thread deleting or pulling it before we finish driving it to disk!
+    ++frame.pin_count_;
+
+    std::unique_lock<std::shared_mutex> frame_lock{frame.rwlatch_};
+
+    auto done = ScheduleFlush(frame);
+
+    // release bpm lock and wait for IO safely
+    bpm_lock.unlock();
+    bool success = done.get();
+    if (!success) {
+      throw std::runtime_error("Flush failed");
+    }
+
     frame.is_dirty_ = false;
+    bpm_lock.lock();
+
+    --frame.pin_count_;
+
+    if (frame.pin_count_ > 0) {
+      // frame was pinned while doing IO and not holding bpm_lock
+      // cannot flush, someone wants to use this page!
+      // frame_lock is unlocked automatically when leaving scope
+      return false;
+    }
+
+    page_table_.erase(frame.page_id_);
+    frame.Reset();
+    free_frames_.push_back(frame.frame_id_);
+    return true;
   }
 
+  if (frame.pin_count_ > 0) {
+    return false;
+  }
+
+  // frame is clean, don't need to flush
   page_table_.erase(frame.page_id_);
   frame.Reset();
   free_frames_.push_back(frame.frame_id_);
+  return true;
 }
 
-void BufferPoolManager::DeallocateFrame(frame_id_t frame_id) {
+auto BufferPoolManager::DeallocateFrame(frame_id_t frame_id, std::unique_lock<std::mutex> &bpm_lock) -> bool {
   BUSTUB_ASSERT(0 <= frame_id && static_cast<size_t>(frame_id) < frames_.size(), "frame id out of range");
-  DeallocateFrame(*frames_[frame_id]);
+  return DeallocateFrame(*frames_[frame_id], bpm_lock);
 }
 
-void BufferPoolManager::DeallocateFrameByPageID(page_id_t page_id) {
+auto BufferPoolManager::DeallocateFrameByPageID(page_id_t page_id, std::unique_lock<std::mutex> &bpm_lock) -> bool {
   auto iter = page_table_.find(page_id);
   BUSTUB_ASSERT(iter != page_table_.end(), "page id is not mapped");
-  DeallocateFrame(iter->second);
+  return DeallocateFrame(iter->second, bpm_lock);
 }
 
 auto BufferPoolManager::FindFrameInMemory(page_id_t page_id) -> std::shared_ptr<FrameHeader> {
@@ -573,15 +632,34 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id, std::unique_l
   if (frame_ptr == nullptr) {
     // not in memory
     // try find in disk
-    if (frame_ptr = AllocateFrame(page_id); frame_ptr == nullptr) {
+    auto allocated_frame = AllocateFrame(bpm_lock);
+    if (allocated_frame == nullptr) {
       // buffer is full
       return nullptr;
     }
 
+    // re-check in case another thread already allocated it while we waited for eviction.
+    frame_ptr = FindFrameInMemory(page_id);
+    if (frame_ptr != nullptr) {
+      // another thread allocated it! return ours to free list
+      free_frames_.push_back(allocated_frame->frame_id_);
+      return frame_ptr;
+    }
+
+    // it is ours to allocate!
+    frame_ptr = allocated_frame;
+    frame_ptr->page_id_ = page_id;
+    page_table_[page_id] = frame_ptr->frame_id_;
+
     // find in disk
-    // lock frame to avoid being access in IO phase
-    std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_};
+    // protect the pin count to prevent eviction
     ++frame_ptr->pin_count_;
+
+    // lock frame to avoid being access in IO phase
+    // Safe to do while holding bpm_lock because frame comes from free list (was pin_count == 0)
+    std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_, std::defer_lock};
+    frame_lock.lock();
+
     // release bpm latch in IO phase
     bpm_lock.unlock();
 
@@ -601,7 +679,7 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id, std::unique_l
 
     if (!success) {
       // IO error
-      DeallocateFrame(*frame_ptr);
+      DeallocateFrame(*frame_ptr, bpm_lock);
       return nullptr;
     }
   }
@@ -609,14 +687,18 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id, std::unique_l
   return frame_ptr;
 }
 
-void BufferPoolManager::Flush(FrameHeader &frame) {
-  // IO phase
+auto BufferPoolManager::ScheduleFlush(FrameHeader &frame) -> std::future<bool> {
   auto promise = disk_scheduler_->CreatePromise();
   auto done = promise.get_future();
   DiskRequest request{true, frame.GetDataMut(), frame.page_id_, std::move(promise)};
   std::vector<DiskRequest> request_vector;
   request_vector.push_back(std::move(request));
   disk_scheduler_->Schedule(request_vector);
+  return done;
+}
+
+void BufferPoolManager::Flush(FrameHeader &frame) {
+  auto done = ScheduleFlush(frame);
 
   // IO return
   if (!done.get()) {

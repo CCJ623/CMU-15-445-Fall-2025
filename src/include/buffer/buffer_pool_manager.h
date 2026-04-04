@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <future>
 #include <list>
 #include <memory>
 #include <optional>
@@ -175,15 +176,16 @@ class BufferPoolManager {
    * stored inside of it. Additionally, you may also want to implement a helper function that returns either a shared
    * pointer to a `FrameHeader` that already has a page's data stored inside of it, or an index to said `FrameHeader`.
    */
-  auto AllocateFrame(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
+  auto AllocateFrame(std::unique_lock<std::mutex> &bpm_lock) -> std::shared_ptr<FrameHeader>;
 
-  void DeallocateFrame(FrameHeader &frame);
-  void DeallocateFrame(frame_id_t frame_id);
-  void DeallocateFrameByPageID(page_id_t page_id);
+  auto DeallocateFrame(FrameHeader &frame, std::unique_lock<std::mutex> &bpm_lock) -> bool;
+  auto DeallocateFrame(frame_id_t frame_id, std::unique_lock<std::mutex> &bpm_lock) -> bool;
+  auto DeallocateFrameByPageID(page_id_t page_id, std::unique_lock<std::mutex> &bpm_lock) -> bool;
 
   auto FindFrameInMemory(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
   auto FindPageInMemoryAndDisk(page_id_t page_id, std::unique_lock<std::mutex> &bpm_lock)
       -> std::shared_ptr<FrameHeader>;
+  auto ScheduleFlush(FrameHeader &frame) -> std::future<bool>;
   void Flush(FrameHeader &frame);
 };
 }  // namespace bustub
