@@ -596,7 +596,7 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id) -> std::share
 }
 
 void BufferPoolManager::Flush(FrameHeader &frame) {
-  std::promise<bool> promise;
+  auto promise = disk_scheduler_->CreatePromise();
   auto done = promise.get_future();
   DiskRequest request{true, frame.GetDataMut(), frame.page_id_, std::move(promise)};
   std::vector<DiskRequest> request_vector;
