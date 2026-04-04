@@ -190,7 +190,7 @@ void ArcReplacer::RecordAccess(frame_id_t frame_id, page_id_t page_id, [[maybe_u
       if (mfu_ghost_.size() >= mru_ghost_.size()) {
         mru_target_size_ = std::max(decltype(mru_target_size_){1}, mru_target_size_) - 1;
       } else {
-        auto decrease_size = mfu_ghost_.size() / mru_ghost_.size();
+        auto decrease_size = mru_ghost_.size() / mfu_ghost_.size();
         mru_target_size_ = std::max(decrease_size, mru_target_size_) - decrease_size;
       }
       Log(fmt::format("[RecordAccess] Ghost hit in MFU_GHOST (page {}): mru_target {} -> {}", page_id, old_target,
