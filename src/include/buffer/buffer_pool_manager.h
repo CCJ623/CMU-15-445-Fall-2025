@@ -182,7 +182,8 @@ class BufferPoolManager {
   void DeallocateFrameByPageID(page_id_t page_id);
 
   auto FindFrameInMemory(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
-  auto FindPageInMemoryAndDisk(page_id_t page_id) -> std::shared_ptr<FrameHeader>;
+  auto FindPageInMemoryAndDisk(page_id_t page_id, std::unique_lock<std::mutex> &bpm_lock)
+      -> std::shared_ptr<FrameHeader>;
   void Flush(FrameHeader &frame);
 };
 }  // namespace bustub

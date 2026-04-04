@@ -235,7 +235,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
   std::unique_lock<std::mutex> lock{*bpm_latch_};
-  auto frame_ptr = FindPageInMemoryAndDisk(page_id);
+  auto frame_ptr = FindPageInMemoryAndDisk(page_id, lock);
   if (frame_ptr == nullptr) {
     // not found or buffer full
     return std::nullopt;
@@ -281,7 +281,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
   }
 
   std::unique_lock<std::mutex> lock{*bpm_latch_};
-  auto frame_ptr = FindPageInMemoryAndDisk(page_id);
+  auto frame_ptr = FindPageInMemoryAndDisk(page_id, lock);
   if (frame_ptr == nullptr) {
     // not found or buffer full
     return std::nullopt;
@@ -565,7 +565,8 @@ auto BufferPoolManager::FindFrameInMemory(page_id_t page_id) -> std::shared_ptr<
   return frames_[iter->second];
 }
 
-auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id) -> std::shared_ptr<FrameHeader> {
+auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id, std::unique_lock<std::mutex> &bpm_lock)
+    -> std::shared_ptr<FrameHeader> {
   // try find in buffer
   auto frame_ptr = FindFrameInMemory(page_id);
 
@@ -577,6 +578,14 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id) -> std::share
       return nullptr;
     }
 
+    // find in disk
+    // lock frame to avoid being access in IO phase
+    std::unique_lock<std::shared_mutex> frame_lock{frame_ptr->rwlatch_};
+    ++frame_ptr->pin_count_;
+    // release bpm latch in IO phase
+    bpm_lock.unlock();
+
+    // IO phase
     auto promise = disk_scheduler_->CreatePromise();
     auto done = promise.get_future();
     DiskRequest request{false, frame_ptr->GetDataMut(), page_id, std::move(promise)};
@@ -584,18 +593,24 @@ auto BufferPoolManager::FindPageInMemoryAndDisk(page_id_t page_id) -> std::share
     requests.push_back(std::move(request));
     disk_scheduler_->Schedule(requests);
 
-    if (!done.get()) {
+    // IO return
+    auto success = done.get();
+    frame_lock.unlock();
+    bpm_lock.lock();
+    --frame_ptr->pin_count_;
+
+    if (!success) {
       // IO error
+      DeallocateFrame(*frame_ptr);
       return nullptr;
     }
-
-    page_table_[page_id] = frame_ptr->frame_id_;
   }
 
   return frame_ptr;
 }
 
 void BufferPoolManager::Flush(FrameHeader &frame) {
+  // IO phase
   auto promise = disk_scheduler_->CreatePromise();
   auto done = promise.get_future();
   DiskRequest request{true, frame.GetDataMut(), frame.page_id_, std::move(promise)};
@@ -603,6 +618,7 @@ void BufferPoolManager::Flush(FrameHeader &frame) {
   request_vector.push_back(std::move(request));
   disk_scheduler_->Schedule(request_vector);
 
+  // IO return
   if (!done.get()) {
     // disk error
     throw std::runtime_error("Flush failed");
