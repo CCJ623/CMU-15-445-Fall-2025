@@ -141,7 +141,7 @@ auto ReadPageGuard::IsDirty() const -> bool {
 void ReadPageGuard::Flush() {
   // UNIMPLEMENTED("TODO(P1): Add implementation.");
 
-  std::promise<bool> promise;
+  auto promise = disk_scheduler_->CreatePromise();
   auto done = promise.get_future();
   DiskRequest request{true, frame_->GetDataMut(), frame_->page_id_, std::move(promise)};
   std::vector<DiskRequest> request_vector;
@@ -354,7 +354,7 @@ void WritePageGuard::Drop() {
 WritePageGuard::~WritePageGuard() { Drop(); }
 
 void WritePageGuard::FlushHelper() {
-  std::promise<bool> promise;
+  auto promise = disk_scheduler_->CreatePromise();
   auto done = promise.get_future();
   DiskRequest request{true, frame_->GetDataMut(), frame_->page_id_, std::move(promise)};
   std::vector<DiskRequest> request_vector;
