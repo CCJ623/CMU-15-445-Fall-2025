@@ -54,9 +54,8 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetTombstones() const -> std::vector<KeyType> {
   std::vector<KeyType> result;
   result.reserve(num_tombstones_);
-  for (size_t i = 0; i < num_tombstones_; i++) {
-    result.push_back(key_array_[tombstones_[i]]);
-  }
+  std::transform(tombstones_, tombstones_ + num_tombstones_, std::back_inserter(result),
+                 [this](size_t index) { return key_array_[index]; });
   return result;
 }
 
@@ -64,19 +63,20 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetTombstones() const -> std::vector<KeyType> {
  * Helper methods to set/get next page id
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetNextPageId() const -> page_id_t { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetNextPageId() const -> page_id_t { return next_page_id_; }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::SetNextPageId(page_id_t next_page_id) {
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
-}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::SetNextPageId(page_id_t next_page_id) { next_page_id_ = next_page_id; }
 
 /*
  * Helper method to find and return the key associated with input "index" (a.k.a
  * array offset)
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto B_PLUS_TREE_LEAF_PAGE_TYPE::KeyAt(int index) const -> KeyType { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::KeyAt(int index) const -> KeyType {
+  BUSTUB_ASSERT(0 <= index && index <= GetSize(), "KeyAt(): index out of range");
+  return key_array_[index];
+}
 
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;
 
