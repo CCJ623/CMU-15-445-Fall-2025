@@ -10,11 +10,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
+#include <iterator>
 #include <sstream>
+#include <vector>
 
+#include "common/config.h"
 #include "common/exception.h"
+#include "common/macros.h"
 #include "common/rid.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/b_plus_tree_page.h"
 
 namespace bustub {
 
@@ -32,7 +38,13 @@ namespace bustub {
  * @param max_size Max size of the leaf node
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) {
+  SetSize(0);
+  SetMaxSize(max_size);
+  SetPageType(IndexPageType::LEAF_PAGE);
+  next_page_id_ = INVALID_PAGE_ID;
+  num_tombstones_ = 0;
+}
 
 /**
  * @brief Helper function for fetching tombstones of a page.
@@ -40,7 +52,12 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) { UNIMPLEMENTED("TODO(P2): A
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetTombstones() const -> std::vector<KeyType> {
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
+  std::vector<KeyType> result;
+  result.reserve(num_tombstones_);
+  for (size_t i = 0; i < num_tombstones_; i++) {
+    result.push_back(key_array_[tombstones_[i]]);
+  }
+  return result;
 }
 
 /**
