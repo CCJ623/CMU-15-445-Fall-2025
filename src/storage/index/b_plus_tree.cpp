@@ -300,7 +300,18 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     // root not split, return
     return true;
   }
+
   // root split, create new root and return
+  // new page for second half
+  auto new_root_page_id = bpm_->NewPage();
+  // write second half to new page
+  auto new_root_page_guard = bpm_->WritePage(new_root_page_id);
+  auto &new_root_page = *(new_root_page_guard.AsMut<InternalPage>());
+  new_root_page.Init(internal_max_size_, *root_second_half);
+  // setup push up key/value for next loop
+  // key[0] in internal page is invalid, so we need to grab it from upstream_second_half
+  push_up_key = root_second_half->front().first;
+  push_up_value = new_root_page_id;
   create_new_root_page(push_up_key, context.root_page_id_, push_up_value);
   return true;
 }

@@ -151,7 +151,8 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Insert(const KeyType &key, const ValueType 
   // full, need to split
   // result is begin with a valid key/value
   std::vector<MappingType> result;
-  auto mid_index = std::distance(begin(key_array_), end(key_array_)) / 2;
+  // mid_index is index of value_array, not the offset of begin(key_array)_ !!!
+  auto mid_index = std::distance(begin(key_array_), end(key_array_)) / 2 + 1;
   const auto &mid_key = KeyAt(mid_index);
   if (comparator(key, mid_key) < 0) {
     // insert into first half
@@ -166,8 +167,10 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Insert(const KeyType &key, const ValueType 
     // insert into second half
     result.reserve(GetSize() - mid_index + 1);
     auto mid_iter = begin(key_array_) + mid_index;
-    auto insert_index = std::distance(
-        begin(key_array_), std::upper_bound(mid_iter, end(key_array_), key, ConvertToStdComparator(comparator)));
+    // insert_index is index of value_array, not the offset of begin(key_array)_ !!!
+    auto insert_index = std::distance(begin(key_array_), std::upper_bound(mid_iter, end(key_array_), key,
+                                                                          ConvertToStdComparator(comparator))) +
+                        1;
     // copy kv before insert index
     for (auto index = mid_index; index != insert_index; ++index) {
       result.emplace_back(KeyAt(index), ValueAt(index));
@@ -181,9 +184,10 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Insert(const KeyType &key, const ValueType 
     SetSize(mid_index);
   }
 
-  BUSTUB_ASSERT(!IsInsufficient(), "BPlusTreeLeafPage::Insert(): first half become insufficient after split");
+  // root page do not need half full
+  BUSTUB_ASSERT(!IsInsufficient(), "BPlusTreeInternalPage::Insert(): first half become insufficient after split");
   BUSTUB_ASSERT(result.size() >= static_cast<size_t>(GetMinSize()),
-                "BPlusTreeLeafPage::Insert(): second half become insufficient after split");
+                "BPlusTreeInternalPage::Insert(): second half become insufficient after split");
   return result;
 }
 
@@ -203,7 +207,8 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::InsertHelper(const KeyType &key, const Valu
                 "BPlusTreeInternalPage::InsertHelper(): try to insert a key which already exist");
 
   auto key_target_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
-  auto value_target_iter = begin(page_id_array_) + std::distance(begin(key_array_), key_target_iter);
+  auto value_target_iter = begin(page_id_array_) + std::distance(begin(key_array_), key_target_iter) + 1;
+  // auto value_target_iter = begin(page_id_array_) + std::distance(begin(key_array_), key_target_iter);
   std::move_backward(key_target_iter, end(key_array_), end(key_array_) + 1);
   *key_target_iter = key;
   std::move_backward(value_target_iter, end(page_id_array_), end(page_id_array_) + 1);
