@@ -62,6 +62,9 @@ class BPlusTreePage {
   void SetMaxSize(int max_size);
   auto GetMinSize() const -> int;
 
+  auto IsFull() const -> bool { return GetSize() == GetMaxSize(); }
+  auto IsInsufficient() const -> bool { return GetSize() < GetMinSize(); }
+
   /*
    * TODO(P2): Remove __attribute__((__unused__)) if you intend to use the fields.
    */

@@ -12,6 +12,8 @@
 
 #pragma once
 
+#include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,6 +68,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   BPlusTreeLeafPage(const BPlusTreeLeafPage &other) = delete;
 
   void Init(int max_size = LEAF_PAGE_SLOT_CNT);
+  void Init(int max_size, const std::vector<MappingType> &kvs);
 
   auto GetTombstones() const -> std::vector<KeyType>;
 
@@ -73,6 +76,13 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
   auto KeyAt(int index) const -> KeyType;
+  auto ValueAt(int index) const -> ValueType;
+  auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> std::optional<ValueType>;
+  auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
+      -> std::optional<std::vector<MappingType>>;
+  auto Contains(const KeyType &key, const KeyComparator &comparator) const -> bool;
+  // return true if leaf is really full
+  auto IsLeafFull() const -> bool { return IsFull() && num_tombstones_ == 0; }
 
   /**
    * @brief for test only return a string representing all keys in
@@ -118,6 +128,33 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   KeyType key_array_[LEAF_PAGE_SLOT_CNT];
   ValueType rid_array_[LEAF_PAGE_SLOT_CNT];
   // (Spring 2025) Feel free to add more fields and helper functions below if needed
+
+  void InsertHelper(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
+  void EvictTombstones();
+
+  auto ConvertToStdComparator(const KeyComparator &comparator) const {
+    return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
+  }
+
+  template <typename T, std::size_t N>
+  auto begin(T (&array)[N]) const -> T * {
+    return std::begin(array);
+  }
+
+  template <typename T, std::size_t N>
+  auto cbegin(T (&array)[N]) const -> const T * {
+    return begin(array);
+  }
+
+  template <typename T, std::size_t N>
+  auto end(T (&array)[N]) const -> T * {
+    return std::begin(array) + GetSize();
+  }
+
+  template <typename T, std::size_t N>
+  auto cend(T (&array)[N]) const -> T * {
+    return end(array);
+  }
 };
 
 }  // namespace bustub

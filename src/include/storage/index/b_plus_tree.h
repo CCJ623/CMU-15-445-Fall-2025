@@ -25,12 +25,14 @@
 #include <algorithm>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <queue>
 #include <shared_mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "common/config.h"
@@ -42,6 +44,36 @@
 #include "storage/page/page_guard.h"
 
 namespace bustub {
+
+namespace b_plus_tree {
+constexpr bool DEBUG_MODE = true;
+
+class Debuger {
+ public:
+  Debuger(std::string_view function_name, std::function<void()> function)
+      : function_name_(function_name), function_(std::move(function)) {
+    if constexpr (DEBUG_MODE) {
+      std::cout << ">>> START " << function_name_ << " <<<" << std::endl;
+      if (function_) {
+        function_();
+      }
+    }
+  }
+
+  ~Debuger() {
+    if constexpr (DEBUG_MODE) {
+      std::cout << "<<< END " << function_name_ << " >>>" << std::endl;
+      if (function_) {
+        function_();
+      }
+    }
+  }
+
+ private:
+  std::string_view function_name_;
+  std::function<void()> function_;
+};
+}  // namespace b_plus_tree
 
 struct PrintableBPlusTree;
 

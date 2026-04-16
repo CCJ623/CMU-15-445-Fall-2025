@@ -12,9 +12,13 @@
 
 #pragma once
 
+#include <sys/types.h>
 #include <queue>
 #include <string>
+#include <type_traits>
+#include <vector>
 
+#include "common/config.h"
 #include "storage/page/b_plus_tree_page.h"
 
 namespace bustub {
@@ -51,10 +55,12 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   BPlusTreeInternalPage(const BPlusTreeInternalPage &other) = delete;
 
   void Init(int max_size = INTERNAL_PAGE_SLOT_CNT);
+  void Init(int max_size, const std::vector<MappingType> &kvs);
 
   auto KeyAt(int index) const -> KeyType;
 
   void SetKeyAt(int index, const KeyType &key);
+  void SetValueAt(int index, const ValueType &value);
 
   /**
    * @param value The value to search for
@@ -63,6 +69,11 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   auto ValueIndex(const ValueType &value) const -> int;
 
   auto ValueAt(int index) const -> ValueType;
+  auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> ValueType;
+  auto GetSplitPos(const KeyType &key, const KeyComparator &comparator) const -> uint;
+  auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
+      -> std::optional<std::vector<MappingType>>;
+  auto Contains(const KeyType &key, const KeyComparator &comparator) const -> bool;
 
   /**
    * @brief For test only, return a string representing all keys in
@@ -95,6 +106,35 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   KeyType key_array_[INTERNAL_PAGE_SLOT_CNT];
   ValueType page_id_array_[INTERNAL_PAGE_SLOT_CNT];
   // (Spring 2025) Feel free to add more fields and helper functions below if needed
+
+  void InsertHelper(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
+
+  auto ConvertToStdComparator(const KeyComparator &comparator) const {
+    return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
+  }
+
+  template <typename T, std::size_t N>
+  auto begin(T (&array)[N]) const -> T * {
+    if constexpr (std::is_same_v<std::remove_const_t<T>, KeyType>) {
+      return std::begin(array) + 1;
+    }
+    return std::begin(array);
+  }
+
+  template <typename T, std::size_t N>
+  auto cbegin(T (&array)[N]) const -> const T * {
+    return begin(array);
+  }
+
+  template <typename T, std::size_t N>
+  auto end(T (&array)[N]) const -> T * {
+    return std::begin(array) + GetSize();
+  }
+
+  template <typename T, std::size_t N>
+  auto cend(T (&array)[N]) const -> T * {
+    return end(array);
+  }
 };
 
 }  // namespace bustub

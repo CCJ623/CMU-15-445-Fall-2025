@@ -10,9 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <sstream>
+#include <vector>
 
+#include "common/config.h"
 #include "common/exception.h"
 #include "common/macros.h"
 #include "storage/page/b_plus_tree_internal_page.h"
@@ -34,9 +38,26 @@ namespace bustub {
  */
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Init(int max_size) {
+  BUSTUB_ASSERT(0 < max_size && static_cast<size_t>(max_size) <= INTERNAL_PAGE_SLOT_CNT,
+                "BPlusTreeInternalPage::Init(): max_size out of range");
+
   SetMaxSize(max_size);
   SetSize(0);
   SetPageType(IndexPageType::INTERNAL_PAGE);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Init(int max_size, const std::vector<MappingType> &kvs) {
+  Init(max_size);
+
+  BUSTUB_ASSERT(0 <= kvs.size() && kvs.size() <= static_cast<size_t>(GetMaxSize()),
+                "BPlusTreeInternalPage::Init(): kvs.size() out of range");
+
+  SetSize(kvs.size());
+  for (size_t index = 0; index != kvs.size(); ++index) {
+    key_array_[index] = kvs[index].first;
+    page_id_array_[index] = kvs[index].second;
+  }
 }
 
 /**
@@ -67,6 +88,19 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetKeyAt(int index, const KeyType &key) {
 }
 
 /**
+ * @brief Set value at the specified index.
+ *
+ * @param index The index of the value to set. Index must be non-zero.
+ * @param value The new value for value
+ */
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetValueAt(int index, const ValueType &value) {
+  BUSTUB_ASSERT(0 <= index && index < GetSize(), "SetKeyAt(): index out of range");
+
+  page_id_array_[index] = value;
+}
+
+/**
  * @brief Helper method to get the value associated with input "index"(a.k.a array
  * offset)
  *
@@ -78,6 +112,103 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::ValueAt(int index) const -> ValueType {
   BUSTUB_ASSERT(0 <= index && index < GetSize(), "ValueAt(): index out of range");
 
   return page_id_array_[index];
+}
+
+// return page id that key belong
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::GetValue(const KeyType &key, const KeyComparator &comparator) const -> ValueType {
+  auto target_iter = std::upper_bound(cbegin(key_array_), cend(key_array_), key, ConvertToStdComparator(comparator));
+  auto index = std::distance(cbegin(key_array_), target_iter);
+  return ValueAt(index);
+}
+
+// get the spliit position when inserting key
+// assume page is full
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::GetSplitPos(const KeyType &key, const KeyComparator &comparator) const -> uint {
+  BUSTUB_ASSERT(IsFull(), "BPlusTreeInternalPage::GetSplitPos(): try to get split position of a non-full page");
+
+  auto mid_index = std::distance(cbegin(key_array_), cend(key_array_)) / 2;
+  const auto &mid_key = KeyAt(mid_index);
+  if (comparator(key, mid_key) < 0) {
+    return mid_index;
+  }
+  return mid_index + 1;
+}
+
+// assume not full
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
+    -> std::optional<std::vector<MappingType>> {
+  BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::Insert(): try to insert a key which already exist");
+
+  if (!IsFull()) {
+    // not full
+    InsertHelper(key, value, comparator);
+    return std::nullopt;
+  }
+
+  // full, need to split
+  // result is begin with a valid key/value
+  std::vector<MappingType> result;
+  auto mid_index = std::distance(begin(key_array_), end(key_array_)) / 2;
+  const auto &mid_key = KeyAt(mid_index);
+  if (comparator(key, mid_key) < 0) {
+    // insert into first half
+    // copy second half
+    result.reserve(GetSize() - mid_index);
+    for (auto index = mid_index; index != GetSize(); ++index) {
+      result.emplace_back(KeyAt(index), ValueAt(index));
+    }
+    SetSize(mid_index);
+    InsertHelper(key, value, comparator);
+  } else {
+    // insert into second half
+    result.reserve(GetSize() - mid_index + 1);
+    auto mid_iter = begin(key_array_) + mid_index;
+    auto insert_index = std::distance(
+        begin(key_array_), std::upper_bound(mid_iter, end(key_array_), key, ConvertToStdComparator(comparator)));
+    // copy kv before insert index
+    for (auto index = mid_index; index != insert_index; ++index) {
+      result.emplace_back(KeyAt(index), ValueAt(index));
+    }
+    // insert target kv
+    result.emplace_back(key, value);
+    // copy kv after insert index
+    for (auto index = insert_index; index != GetSize(); ++index) {
+      result.emplace_back(KeyAt(index), ValueAt(index));
+    }
+    SetSize(mid_index);
+  }
+
+  BUSTUB_ASSERT(!IsInsufficient(), "BPlusTreeLeafPage::Insert(): first half become insufficient after split");
+  BUSTUB_ASSERT(result.size() >= static_cast<size_t>(GetMinSize()),
+                "BPlusTreeLeafPage::Insert(): second half become insufficient after split");
+  return result;
+}
+
+// return true if key in key_array_
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Contains(const KeyType &key, const KeyComparator &comparator) const -> bool {
+  return std::binary_search(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+}
+
+// assume not full
+// assume key is not exist
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::InsertHelper(const KeyType &key, const ValueType &value,
+                                                  const KeyComparator &comparator) {
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeInternalPage::InsertHelper(): try to insert to a full page");
+  BUSTUB_ASSERT(!Contains(key, comparator),
+                "BPlusTreeInternalPage::InsertHelper(): try to insert a key which already exist");
+
+  auto key_target_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+  auto value_target_iter = begin(page_id_array_) + std::distance(begin(key_array_), key_target_iter);
+  std::move_backward(key_target_iter, end(key_array_), end(key_array_) + 1);
+  *key_target_iter = key;
+  std::move_backward(value_target_iter, end(page_id_array_), end(page_id_array_) + 1);
+  *value_target_iter = value;
+  ChangeSizeBy(1);
 }
 
 // valuetype for internalNode should be page id_t
