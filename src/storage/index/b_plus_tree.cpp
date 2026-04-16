@@ -13,6 +13,7 @@
 #include "storage/index/b_plus_tree.h"
 #include <algorithm>
 #include <optional>
+#include <utility>
 #include "buffer/traced_buffer_pool_manager.h"
 #include "common/config.h"
 #include "common/rid.h"
@@ -20,6 +21,7 @@
 #include "storage/page/b_plus_tree_header_page.h"
 #include "storage/page/b_plus_tree_internal_page.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/b_plus_tree_page.h"
 #include "storage/page/page_guard.h"
 
 namespace bustub {
@@ -265,6 +267,29 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     return true;
   }
 
+  // push up KV to upstream page
+  // return nullopt if upstream page not split
+  // return upstream's push up KV if upstream page split
+  auto insert_to_upstream_page = [this](InternalPage &upstream_page, const KeyType &key,
+                                        const page_id_t &value) -> std::optional<std::pair<KeyType, page_id_t>> {
+    auto second_half = upstream_page.Insert(key, value, comparator_);
+
+    if (second_half == std::nullopt) {
+      // upstream not split, return
+      return std::nullopt;
+    }
+    // upstream split
+    // new page for second half
+    auto new_page_id = bpm_->NewPage();
+    // write second half to new page
+    auto new_page_guard = bpm_->WritePage(new_page_id);
+    auto &new_page = *(new_page_guard.AsMut<InternalPage>());
+    new_page.Init(internal_max_size_, *second_half);
+    // setup push up key/value for next loop
+    // key[0] in internal page is invalid, so we need to grab it from upstream_second_half
+    return std::make_pair(std::move(second_half->front().first), new_page_id);
+  };
+
   // leaf is not root, need to insert all way up
   // rend() - 1 is root page guard
   // stop at root page
@@ -273,46 +298,28 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   for (auto upstream_iter = context.write_set_.rbegin() + 1, root_iter = context.write_set_.rend() - 1;
        upstream_iter != root_iter; ++upstream_iter) {
     auto &upstream_page = *((context.write_set_.rbegin() + 1)->AsMut<InternalPage>());
-    auto upstream_second_half = upstream_page.Insert(push_up_key, push_up_value, comparator_);
-
-    if (upstream_second_half == std::nullopt) {
-      // upstream not split, return
+    auto next_kv = insert_to_upstream_page(upstream_page, push_up_key, push_up_value);
+    if (next_kv == std::nullopt) {
+      // upstream not split
       return true;
     }
     // upstream split
-    // new page for second half
-    auto new_page_id = bpm_->NewPage();
-    // write second half to new page
-    auto new_page_guard = bpm_->WritePage(new_page_id);
-    auto &new_page = *(new_page_guard.AsMut<InternalPage>());
-    new_page.Init(internal_max_size_, *upstream_second_half);
     // setup push up key/value for next loop
     // key[0] in internal page is invalid, so we need to grab it from upstream_second_half
-    push_up_key = upstream_second_half->front().first;
-    push_up_value = new_page_id;
+    push_up_key = std::move(next_kv->first);
+    push_up_value = next_kv->second;
   }
 
   // reach root page
   auto &root_page = *(context.write_set_.front().AsMut<InternalPage>());
-  auto root_second_half = root_page.Insert(push_up_key, push_up_value, comparator_);
-
-  if (root_second_half == std::nullopt) {
-    // root not split, return
+  auto next_kv = insert_to_upstream_page(root_page, push_up_key, push_up_value);
+  if (next_kv == std::nullopt) {
+    // root not split
     return true;
   }
 
-  // root split, create new root and return
-  // new page for second half
-  auto new_root_page_id = bpm_->NewPage();
-  // write second half to new page
-  auto new_root_page_guard = bpm_->WritePage(new_root_page_id);
-  auto &new_root_page = *(new_root_page_guard.AsMut<InternalPage>());
-  new_root_page.Init(internal_max_size_, *root_second_half);
-  // setup push up key/value for next loop
-  // key[0] in internal page is invalid, so we need to grab it from upstream_second_half
-  push_up_key = root_second_half->front().first;
-  push_up_value = new_root_page_id;
-  create_new_root_page(push_up_key, context.root_page_id_, push_up_value);
+  // root split
+  create_new_root_page(next_kv->first, context.root_page_id_, next_kv->second);
   return true;
 }
 
