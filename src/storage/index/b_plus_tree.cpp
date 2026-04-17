@@ -16,6 +16,7 @@
 #include <utility>
 #include "buffer/traced_buffer_pool_manager.h"
 #include "common/config.h"
+#include "common/macros.h"
 #include "common/rid.h"
 #include "storage/index/b_plus_tree_debug.h"
 #include "storage/page/b_plus_tree_header_page.h"
@@ -261,11 +262,14 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     return std::move(new_page_guard);
   };
 
-  if (context.write_set_.back().GetPageId() == context.root_page_id_) {
+  if (leaf_page_id == context.root_page_id_) {
     // leaf is root, create a new root and return
     create_new_root_page(leaf_second_half->front().first, leaf_page_id, leaf_new_page_id);
     return true;
   }
+
+  // release leaf page
+  context.write_set_.pop_back();
 
   // push up KV to upstream page
   // return nullopt if upstream page not split
@@ -295,10 +299,12 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // stop at root page
   KeyType push_up_key = std::move(leaf_second_half->front().first);
   page_id_t push_up_value = leaf_new_page_id;
-  for (auto upstream_iter = context.write_set_.rbegin() + 1, root_iter = context.write_set_.rend() - 1;
+  for (auto upstream_iter = context.write_set_.rbegin(), root_iter = context.write_set_.rend() - 1;
        upstream_iter != root_iter; ++upstream_iter) {
     auto &upstream_page = *(upstream_iter->AsMut<InternalPage>());
     auto next_kv = insert_to_upstream_page(upstream_page, push_up_key, push_up_value);
+    // push up success, release current page
+    context.write_set_.pop_back();
     if (next_kv == std::nullopt) {
       // upstream not split
       return true;
@@ -311,8 +317,10 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   }
 
   // reach root page
-  auto &root_page = *(context.write_set_.front().AsMut<InternalPage>());
+  BUSTUB_ASSERT(context.write_set_.size() == 1, "BPlusTree::Insert(): context write set has not only root page");
+  auto &root_page = *(context.write_set_.back().AsMut<InternalPage>());
   auto next_kv = insert_to_upstream_page(root_page, push_up_key, push_up_value);
+  context.write_set_.pop_back();
   if (next_kv == std::nullopt) {
     // root not split
     return true;
