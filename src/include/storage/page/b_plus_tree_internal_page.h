@@ -13,13 +13,17 @@
 #pragma once
 
 #include <sys/types.h>
+#include <iterator>
 #include <queue>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "common/config.h"
+#include "common/macros.h"
 #include "storage/page/b_plus_tree_page.h"
+#include "type/value_factory.h"
 
 namespace bustub {
 
@@ -50,6 +54,11 @@ namespace bustub {
 INDEX_TEMPLATE_ARGUMENTS
 class BPlusTreeInternalPage : public BPlusTreePage {
  public:
+  using KeyIterType = KeyType *;
+  using ConstKeyIterType = const std::remove_pointer_t<KeyIterType> *;
+  using ValueIterType = ValueType *;
+  using ConstValueIterType = const std::remove_pointer_t<ValueIterType> *;
+
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreeInternalPage() = delete;
   BPlusTreeInternalPage(const BPlusTreeInternalPage &other) = delete;
@@ -107,6 +116,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   ValueType page_id_array_[INTERNAL_PAGE_SLOT_CNT];
   // (Spring 2025) Feel free to add more fields and helper functions below if needed
 
+  void InsertHelper(KeyIterType key_iter, const KeyType &key, const ValueType &value, const KeyComparator &comparator);
   void InsertHelper(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
 
   auto ConvertToStdComparator(const KeyComparator &comparator) const {
@@ -116,8 +126,10 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   template <typename T, std::size_t N>
   auto begin(T (&array)[N]) const -> T * {
     if constexpr (std::is_same_v<std::remove_const_t<T>, KeyType>) {
+      // KeyType
       return std::begin(array) + 1;
     }
+    // ValueType
     return std::begin(array);
   }
 
@@ -134,6 +146,14 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   template <typename T, std::size_t N>
   auto cend(T (&array)[N]) const -> T * {
     return end(array);
+  }
+
+  auto GetCorrespondValueIter(ConstKeyIterType key_iter) const -> ConstValueIterType {
+    return cbegin(page_id_array_) + std::distance(cbegin(key_array_), (key_iter)) + 1;
+  }
+
+  auto GetCorrespondValueIter(KeyIterType key_iter) -> ValueIterType {
+    return begin(page_id_array_) + std::distance(begin(key_array_), (key_iter)) + 1;
   }
 };
 

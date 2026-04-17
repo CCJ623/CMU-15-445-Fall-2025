@@ -62,6 +62,11 @@ namespace bustub {
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
 class BPlusTreeLeafPage : public BPlusTreePage {
+  using KeyIterType = KeyType *;
+  using ConstKeyIterType = const std::remove_pointer_t<KeyIterType> *;
+  using ValueIterType = ValueType *;
+  using ConstValueIterType = const std::remove_pointer_t<ValueIterType> *;
+
  public:
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreeLeafPage() = delete;
@@ -129,6 +134,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   ValueType rid_array_[LEAF_PAGE_SLOT_CNT];
   // (Spring 2025) Feel free to add more fields and helper functions below if needed
 
+  void InsertHelper(KeyIterType key_iter, const KeyType &key, const ValueType &value, const KeyComparator &comparator);
   void InsertHelper(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
   void EvictTombstones();
 
@@ -154,6 +160,14 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   template <typename T, std::size_t N>
   auto cend(T (&array)[N]) const -> T * {
     return end(array);
+  }
+
+  auto GetCorrespondValueIter(ConstKeyIterType key_iter) const -> ConstValueIterType {
+    return cbegin(rid_array_) + std::distance(cbegin(key_array_), (key_iter));
+  }
+
+  auto GetCorrespondValueIter(KeyIterType key_iter) -> ValueIterType {
+    return begin(rid_array_) + std::distance(begin(key_array_), (key_iter));
   }
 };
 

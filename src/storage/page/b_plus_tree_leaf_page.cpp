@@ -146,36 +146,44 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
     return std::nullopt;
   }
 
-  // evict failed, need to split
+  /*
+  first, we find where to insert
+  we assume that we already insert key into key_array_
+  then, we calculate the mid_index based on this assumption, making second half is bigger(equal)
+  warning: any index is index of value_array_, so when calculating with key_array_, we must add 1
+  */
+
+  auto begin_iter = begin(key_array_);
+  auto end_iter = end(key_array_);
+  auto assume_end_iter = end_iter + 1;
+  auto insert_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+  auto split_begin_iter = begin_iter + std::distance(begin_iter, assume_end_iter) / 2;
+  // result is begin with a invalid key
   std::vector<MappingType> result;
-  auto mid_index = std::distance(begin(key_array_), end(key_array_)) / 2;
-  const auto &mid_key = KeyAt(mid_index);
-  if (comparator(key, mid_key) < 0) {
+  result.reserve(std::distance(split_begin_iter, assume_end_iter));
+  if (insert_iter < split_begin_iter) {
     // insert into first half
-    // copy second half
-    result.reserve(GetSize() - mid_index);
-    for (auto index = mid_index; index != GetSize(); ++index) {
-      result.emplace_back(KeyAt(index), ValueAt(index));
+    // copy last element of first half to front of second half
+    result.emplace_back(*(split_begin_iter - 1), *(GetCorrespondValueIter(split_begin_iter - 1)));
+    // copy rest of value to second half
+    for (auto iter = split_begin_iter; iter != end_iter; ++iter) {
+      result.emplace_back(*iter, *GetCorrespondValueIter(iter));
     }
-    SetSize(mid_index);
-    InsertHelper(key, value, comparator);
+    SetSize(std::distance(begin(rid_array_), GetCorrespondValueIter(split_begin_iter - 1)));
+    InsertHelper(insert_iter, key, value, comparator);
   } else {
     // insert into second half
-    result.reserve(GetSize() - mid_index + 1);
-    auto mid_iter = begin(key_array_) + mid_index;
-    auto insert_index = std::distance(
-        begin(key_array_), std::upper_bound(mid_iter, end(key_array_), key, ConvertToStdComparator(comparator)));
-    // copy kv before insert index
-    for (auto index = mid_index; index != insert_index; ++index) {
-      result.emplace_back(KeyAt(index), ValueAt(index));
+    // copy kv before insert_iter
+    for (auto iter = split_begin_iter; iter != insert_iter; ++iter) {
+      result.emplace_back(*iter, *GetCorrespondValueIter(iter));
     }
     // insert target kv
     result.emplace_back(key, value);
     // copy kv after insert index
-    for (auto index = insert_index; index != GetSize(); ++index) {
-      result.emplace_back(KeyAt(index), ValueAt(index));
+    for (auto iter = insert_iter; iter != end_iter; ++iter) {
+      result.emplace_back(*iter, *GetCorrespondValueIter(iter));
     }
-    SetSize(mid_index);
+    SetSize(std::distance(begin(rid_array_), GetCorrespondValueIter(split_begin_iter)));
   }
 
   BUSTUB_ASSERT(!IsInsufficient(), "BPlusTreeLeafPage::Insert(): first half become insufficient after split");
@@ -199,6 +207,28 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Contains(const KeyType &key, const KeyComparato
 
 // assume not full
 // assume key is not exist
+// assume iter is valid
+// assume *iter = key is ordered
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(KeyIterType key_iter, const KeyType &key, const ValueType &value,
+                                              const KeyComparator &comparator) {
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeInternalPage::InsertHelper(): try to insert to a full page");
+  BUSTUB_ASSERT(!Contains(key, comparator),
+                "BPlusTreeInternalPage::InsertHelper(): try to insert a key which already exist");
+  BUSTUB_ASSERT(
+      std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator)) == key_iter,
+      "BPlusTreeInternalPage::InsertHelper(): try to insert a key to a unordered place");
+
+  auto value_iter = GetCorrespondValueIter(key_iter);
+  std::move_backward(key_iter, end(key_array_), end(key_array_) + 1);
+  *key_iter = key;
+  std::move_backward(value_iter, end(rid_array_), end(rid_array_) + 1);
+  *value_iter = value;
+  ChangeSizeBy(1);
+}
+
+// assume not full
+// assume key is not exist
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(const KeyType &key, const ValueType &value,
                                               const KeyComparator &comparator) {
@@ -206,13 +236,8 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(const KeyType &key, const ValueTyp
   BUSTUB_ASSERT(!Contains(key, comparator),
                 "BPlusTreeLeafPage::InsertHelper(): try to insert a key which already exist");
 
-  auto key_target_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
-  auto value_target_iter = begin(rid_array_) + std::distance(begin(key_array_), key_target_iter);
-  std::move_backward(key_target_iter, end(key_array_), end(key_array_) + 1);
-  *key_target_iter = key;
-  std::move_backward(value_target_iter, end(rid_array_), end(rid_array_) + 1);
-  *value_target_iter = value;
-  ChangeSizeBy(1);
+  auto key_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+  return InsertHelper(key_iter, key, value, comparator);
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
