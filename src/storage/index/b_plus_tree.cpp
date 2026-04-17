@@ -90,9 +90,8 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
   // walk to leaf page
   // crab grab lock
   while (!internal_page->IsLeafPage()) {
-    context.read_set_.push_back(bpm_->ReadPage(internal_page->GetValue(key, comparator_)));
+    context.read_set_.back() = bpm_->ReadPage(internal_page->GetValue(key, comparator_));
     internal_page = context.read_set_.back().As<InternalPage>();
-    context.read_set_.pop_front();
   }
 
   auto leaf_page = context.read_set_.back().As<LeafPage>();
@@ -137,7 +136,6 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   auto optimistic_try = [this, &context, &key, &value]() -> bool {
     // read root page
     auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
-    ReadPageGuard internal_page_guard;
     WritePageGuard leaf_page_guard;
     context.root_page_id_ = read_header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
     if (context.root_page_id_ == INVALID_PAGE_ID) {
@@ -168,13 +166,15 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       root_page_guard.Drop();
       leaf_page_guard = bpm_->WritePage(context.root_page_id_);
     } else {
-      internal_page_guard = bpm_->ReadPage(context.root_page_id_);
+      // we must maintain two page guard, because we need to get write page guard of leaf page
+      auto internal_page_guard = bpm_->ReadPage(context.root_page_id_);
       // root page is not leaf, walk down
       // walk to leaf page
       // crab grab lock
-      auto internal_page = internal_page_guard.As<InternalPage>();
       while (true) {
-        auto next_page_guard = bpm_->ReadPage(internal_page->GetValue(key, comparator_));
+        auto &internal_page = *(internal_page_guard.As<InternalPage>());
+        auto next_page_id = internal_page.GetValue(key, comparator_);
+        auto next_page_guard = bpm_->ReadPage(next_page_id);
         if (next_page_guard.template As<InternalPage>()->IsLeafPage()) {
           // get write page guard of leaf page and quit
           auto leaf_page_id = next_page_guard.GetPageId();
@@ -182,7 +182,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
           leaf_page_guard = bpm_->WritePage(leaf_page_id);
           break;
         }
-        internal_page = next_page_guard.template As<InternalPage>();
+        internal_page_guard = std::move(next_page_guard);
       }
     }
 
@@ -293,11 +293,11 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // leaf is not root, need to insert all way up
   // rend() - 1 is root page guard
   // stop at root page
-  KeyType push_up_key = leaf_second_half->front().first;
+  KeyType push_up_key = std::move(leaf_second_half->front().first);
   page_id_t push_up_value = leaf_new_page_id;
   for (auto upstream_iter = context.write_set_.rbegin() + 1, root_iter = context.write_set_.rend() - 1;
        upstream_iter != root_iter; ++upstream_iter) {
-    auto &upstream_page = *((context.write_set_.rbegin() + 1)->AsMut<InternalPage>());
+    auto &upstream_page = *(upstream_iter->AsMut<InternalPage>());
     auto next_kv = insert_to_upstream_page(upstream_page, push_up_key, push_up_value);
     if (next_kv == std::nullopt) {
       // upstream not split
