@@ -11,9 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include <algorithm>
-#include <iostream>
+#include <cstddef>
 #include <iterator>
-#include <sstream>
 #include <vector>
 
 #include "common/config.h"
@@ -117,9 +116,35 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::ValueAt(int index) const -> ValueType {
 // return page id that key belong
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::GetValue(const KeyType &key, const KeyComparator &comparator) const -> ValueType {
+  return ValueAt(GetValueIndex(key, comparator));
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::GetValueIndex(const KeyType &key, const KeyComparator &comparator) const
+    -> size_t {
   auto target_iter = std::upper_bound(cbegin(key_array_), cend(key_array_), key, ConvertToStdComparator(comparator));
-  auto index = std::distance(cbegin(key_array_), target_iter);
-  return ValueAt(index);
+  return std::distance(cbegin(key_array_), target_iter);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::PushFront(const KeyType &key, const ValueType &value,
+                                               const KeyComparator &comparator) {
+  BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::PushFront(): try to insert a key which already exist");
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushFront(): try to insert a key to a full page");
+  BUSTUB_ASSERT(comparator(key, KeyAt(0)) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
+
+  InsertHelper(begin(key_array_), key, value, comparator);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::PushBack(const KeyType &key, const ValueType &value,
+                                              const KeyComparator &comparator) {
+  BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::PushBack(): try to insert a key which already exist");
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushBack(): try to insert a key to a full page");
+  BUSTUB_ASSERT(comparator(key, *(end(key_array_) - 1)) > 0,
+                "BPlusTreeLeafPage::PushFront(): try to push front a key <= key_array.back()");
+
+  InsertHelper(end(key_array_), key, value, comparator);
 }
 
 // get the spliit position when inserting key
@@ -201,10 +226,95 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Insert(const KeyType &key, const ValueType 
   return result;
 }
 
+// remove KV at index
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Remove(size_t index) {
+  BUSTUB_ASSERT(0 <= index && index < static_cast<size_t>(GetSize()),
+                "BPlusTreeInternalPage::Remove(): index out of range");
+
+  auto key_iter = &key_array_[index];
+  auto value_iter = &page_id_array_[index];
+  std::copy(key_iter + 1, end(key_array_), key_iter);
+  std::copy(value_iter + 1, end(page_id_array_), value_iter);
+  ChangeSizeBy(-1);
+}
+
 // return true if key in key_array_
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Contains(const KeyType &key, const KeyComparator &comparator) const -> bool {
   return std::binary_search(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+}
+
+// assume page is healthy
+// return min kv
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::EvictMinKv() -> MappingType {
+  BUSTUB_ASSERT(IsHealthy(), "BPlusTreeInternalPage::InsertHelper(): try to evict from a unhealthy page");
+
+  MappingType result;
+  result.first = *begin(key_array_);
+  result.second = *begin(page_id_array_);
+  // remove kv
+  std::copy(begin(key_array_) + 1, end(key_array_), begin(key_array_));
+  std::copy(begin(page_id_array_) + 1, end(page_id_array_), begin(page_id_array_));
+  return result;
+}
+
+// assume page is healthy
+// return max kv
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::EvictMaxKv() -> MappingType {
+  BUSTUB_ASSERT(IsHealthy(), "BPlusTreeInternalPage::InsertHelper(): try to evict from a unhealthy page");
+
+  MappingType result;
+  auto key_iter = end(key_array_) - 1;
+  result.first = *key_iter;
+  result.second = *GetCorrespondValueIter(key_iter);
+  ChangeSizeBy(-1);
+  return result;
+}
+
+// assume another is at right of this, in another words, all another's key are bigger than this
+// mid_key is pull from upstream
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Merge(BPlusTreeInternalPage &another, const KeyType &mid_key,
+                                           const KeyComparator &comparator) {
+  BUSTUB_ASSERT(GetSize() + another.GetSize() == GetMaxSize(), "BPlusTreeInternalPage::Merge(): not full after merge");
+  BUSTUB_ASSERT(comparator(*(end(key_array_) - 1), *(another.end(another.key_array_) - 1)) < 0,
+                "BPlusTreeInternalPage::Merge(): unorder merge");
+
+  // add midkey first
+  PushBack(mid_key, another.ValueAt(0), comparator);
+
+  for (auto key_iter = another.cbegin(another.key_array_), key_end = another.cend(another.key_array_);
+       key_iter != key_end; ++key_iter) {
+    const auto &key = *key_iter;
+    const auto &value = *(another.GetCorrespondValueIter(key_iter));
+    PushBack(key, value, comparator);
+  }
+}
+
+// return std::pair of siblings value, pair.first is leaf, pair.second is right
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::GetSiblings(const KeyType &key, const KeyComparator &comparator) const
+    -> std::pair<page_id_t, page_id_t> {
+  BUSTUB_ASSERT(Contains(key, comparator), "BPlusTreeInternalPage::GetSiblings(): key not exist");
+
+  return GetSiblings(GetValueIndex(key, comparator));
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::GetSiblings(size_t index) const -> std::pair<page_id_t, page_id_t> {
+  BUSTUB_ASSERT(0 <= index && index < static_cast<size_t>(GetSize()),
+                "BPlusTreeInternalPage::GetSiblings(): index out of range");
+
+  std::pair<page_id_t, page_id_t> result;
+  auto value_iter = begin(page_id_array_) + index;
+  auto left_value_iter = value_iter - 1;
+  auto right_value_iter = value_iter + 1;
+  result.first = (left_value_iter < begin(page_id_array_) ? INVALID_PAGE_ID : *left_value_iter);
+  result.second = (right_value_iter >= end(page_id_array_) ? INVALID_PAGE_ID : *right_value_iter);
+  return result;
 }
 
 // assume not full

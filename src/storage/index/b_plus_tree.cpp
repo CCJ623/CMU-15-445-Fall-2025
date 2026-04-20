@@ -12,7 +12,10 @@
 
 #include "storage/index/b_plus_tree.h"
 #include <algorithm>
+#include <cstddef>
 #include <optional>
+#include <stack>
+#include <type_traits>
 #include <utility>
 #include "buffer/traced_buffer_pool_manager.h"
 #include "common/config.h"
@@ -342,12 +345,271 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
  * necessary.
  *
  * @param key input key
+ *
+ * my solution:
+ * if leaf is half full after deletion, delete and return
+ * else if sibling is half full after deletion, borrow from him
+ * else merge sibling (must have same upstream), merge all way up if necessary
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
-  // Declaration of context instance.
-  Context ctx;
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
+  if (IsEmpty()) {
+    return;
+  }
+
+  // optimistic try to remove, return false if failed
+  auto optimistic_try = [this, &key]() -> bool {
+    Context context;
+    // read root page
+    auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
+    WritePageGuard leaf_page_guard;
+    context.root_page_id_ = read_header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+    if (auto root_page_guard = bpm_->ReadPage(context.root_page_id_);
+        root_page_guard.As<InternalPage>()->IsLeafPage()) {
+      // root is leaf
+      root_page_guard.Drop();
+      leaf_page_guard = bpm_->WritePage(context.root_page_id_);
+    } else {
+      // we must maintain two page guard, because we need to get write page guard of leaf page
+      auto internal_page_guard = bpm_->ReadPage(context.root_page_id_);
+      // root page is not leaf, walk down
+      // walk to leaf page
+      // crab grab lock
+      while (true) {
+        auto &internal_page = *(internal_page_guard.As<InternalPage>());
+        auto next_page_id = internal_page.GetValue(key, comparator_);
+        auto next_page_guard = bpm_->ReadPage(next_page_id);
+        if (next_page_guard.template As<InternalPage>()->IsLeafPage()) {
+          // get write page guard of leaf page and quit
+          auto leaf_page_id = next_page_guard.GetPageId();
+          next_page_guard.Drop();
+          leaf_page_guard = bpm_->WritePage(leaf_page_id);
+          break;
+        }
+        internal_page_guard = std::move(next_page_guard);
+      }
+    }
+
+    // leaf_page_guard is ready here
+    auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>());
+    BUSTUB_ASSERT(leaf_page.Contains(key, comparator_), "BPlusTree::Remove(): try to remove a non-exist key");
+    if (!leaf_page.Contains(key, comparator_)) {
+      // key not exist
+      return true;
+    }
+    // key exist
+    if (leaf_page_guard.GetPageId() == context.root_page_id_) {
+      // leaf is root, remove and return
+      leaf_page.Remove(key, comparator_);
+      if (!leaf_page.IsEmpty()) {
+        return true;
+      }
+      // root is empty
+      // delete empty root page
+      auto leaf_page_id = leaf_page_guard.GetPageId();
+      leaf_page_guard.Drop();
+      read_header_page_guard.Drop();
+      // somebody can change the tree here, between two latches
+      context.header_page_ = bpm_->WritePage(header_page_id_);
+      if (context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_ == leaf_page_id &&
+          bpm_->ReadPage(leaf_page_id).As<LeafPage>()->IsEmpty()) {
+        // tree is not changed
+        bpm_->DeletePage(leaf_page_id);
+        context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = INVALID_PAGE_ID;
+      }
+      return true;
+    }
+    // leaf is not root
+    if (leaf_page.IsHealthy()) {
+      // leaf is healthy, no need to merge
+      leaf_page.Remove(key, comparator_);
+      return true;
+    }
+
+    // leaf is not root and unhealthy, need to merge
+    // reacquire write latches from top
+    return false;
+  };
+
+  if (optimistic_try()) {
+    // success
+    return;
+  }
+
+  // optimistic failed
+  // leaf is not root
+  // pessimistic way
+  Context context;
+  context.header_page_ = bpm_->WritePage(header_page_id_);
+  context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
+  context.write_set_.push_back(bpm_->WritePage(context.root_page_id_));
+
+  // stores value index all way down to leaf
+  std::stack<size_t> value_index_stack;
+  // acquire write latches all way down to leaf
+  for (auto internal_page = context.write_set_.back().AsMut<InternalPage>(); !internal_page->IsLeafPage();
+       internal_page = context.write_set_.back().AsMut<InternalPage>()) {
+    auto index = internal_page->GetValueIndex(key, comparator_);
+    value_index_stack.push(index);
+    auto page_id = internal_page->ValueAt(index);
+    context.write_set_.push_back(bpm_->WritePage(page_id));
+  }
+
+  auto leaf_page_id = context.write_set_.back().GetPageId();
+  if (auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>()); !leaf_page.Contains(key, comparator_)) {
+    // key not exist
+    return;
+  }
+
+  // key exist, can remove
+  auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>());
+  leaf_page.Remove(key, comparator_);
+  if (leaf_page_id == context.root_page_id_ || !leaf_page.IsInsufficient()) {
+    // no need to merge
+    return;
+  }
+
+  // non-root page and need merge
+  // first try steal from siblings
+  // if can't steal, then merge sibling and adjust upstream page
+  // if merge happend, this function will remove a pair of KV in upstream page
+  // user should check whether upstream page state after calling this function
+  auto steal_or_merge = [this, &context](auto &current_page, auto &upstream_page, size_t index) {
+    using CurrentPageType = std::decay_t<decltype(current_page)>;
+
+    auto [left_page_id, right_page_id] = upstream_page.GetSiblings(index);
+
+    // find best matched page to steal
+    WritePageGuard target_page_guard;
+    bool is_target_left;
+    if (left_page_id == INVALID_PAGE_ID) {
+      // no left, steal from right
+      target_page_guard = bpm_->WritePage(right_page_id);
+      is_target_left = false;
+    } else if (right_page_id == INVALID_PAGE_ID) {
+      // no right, steal from left
+      target_page_guard = bpm_->WritePage(left_page_id);
+      is_target_left = true;
+    } else {
+      // both left and right exist, steal from bigger one, select right if equal
+      WritePageGuard left_page_guard = bpm_->WritePage(left_page_id);
+      WritePageGuard right_page_guard = bpm_->WritePage(right_page_id);
+      auto &left_page = *(left_page_guard.AsMut<CurrentPageType>());
+      auto &right_page = *(right_page_guard.AsMut<CurrentPageType>());
+      if (right_page.GetSize() >= left_page.GetSize()) {
+        target_page_guard = std::move(right_page_guard);
+        is_target_left = false;
+      } else {
+        target_page_guard = std::move(left_page_guard);
+        is_target_left = true;
+      }
+    }
+
+    auto &target_page = *(target_page_guard.AsMut<CurrentPageType>());
+    if (target_page.IsHealthy()) {
+      // healthy, no need to merge, steal and return
+      if (is_target_left) {
+        if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+          auto [kv, is_in_tombstones] = target_page.EvictMaxKv();
+          current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
+        } else {
+          auto kv = target_page.EvictMaxKv();
+          current_page.PushFront(kv.first, kv.second, comparator_);
+        }
+
+      } else {
+        if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+          auto [kv, is_in_tombstones] = target_page.EvictMinKv();
+          current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
+        } else {
+          auto kv = target_page.EvictMinKv();
+          current_page.PushFront(kv.first, kv.second, comparator_);
+        }
+      }
+      return;
+    }
+
+    // not healthy, need to merge
+    page_id_t delete_page_id;
+    if (is_target_left) {
+      // target page is at left side
+      if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+        // leaf page, merge and remove key in upstream
+        target_page.Merge(current_page, comparator_);
+      } else {
+        // internal page, merge and insert key pull from upstream
+        const auto &mid_key = upstream_page.KeyAt(index);
+        target_page.Merge(current_page, mid_key, comparator_);
+      }
+      upstream_page.Remove(index);
+      delete_page_id = context.write_set_.back().GetPageId();
+      context.write_set_.back() = std::move(target_page_guard);
+    } else {
+      // target page is at right side
+      if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+        // leaf page, merge and remove key in upstream
+        current_page.Merge(target_page, comparator_);
+      } else {
+        // internal page, merge and insert key pull from upstream
+        const auto &mid_key = upstream_page.KeyAt(index + 1);
+        current_page.Merge(target_page, mid_key, comparator_);
+      }
+      upstream_page.Remove(index + 1);
+      delete_page_id = right_page_id;
+      target_page_guard.Drop();
+    }
+
+    // delete merged page
+    while (bpm_->DeletePage(delete_page_id) == false) {
+    }
+  };
+
+  page_id_t new_root_page_id;
+  // do steal_or_merge at leaf page
+  {
+    auto &upstream_page = *(context.write_set_.rbegin() + 1)->AsMut<InternalPage>();
+    steal_or_merge(leaf_page, upstream_page, value_index_stack.top());
+    value_index_stack.pop();
+    if (!upstream_page.IsInsufficient()) {
+      // upstream do not need merge, return
+      return;
+    }
+    new_root_page_id = context.write_set_.back().GetPageId();
+    context.write_set_.pop_back();
+  }
+
+  // need to merge all way up
+  // rend() - 1 is root page guard
+  // stop at root page
+  for (auto current_iter = context.write_set_.rbegin(), upstream_iter = current_iter + 1,
+            root_iter = context.write_set_.rend() - 1;
+       current_iter != root_iter; ++current_iter, upstream_iter = current_iter + 1) {
+    auto &current_page = *(current_iter->AsMut<InternalPage>());
+    auto &upstream_page = *(upstream_iter->AsMut<InternalPage>());
+    auto current_value_index = value_index_stack.top();
+    value_index_stack.pop();
+
+    steal_or_merge(current_page, upstream_page, current_value_index);
+    if (!upstream_page.IsInsufficient()) {
+      // no need to merge
+      return;
+    }
+    // continue merging
+    new_root_page_id = context.write_set_.back().GetPageId();
+    context.write_set_.pop_back();
+  }
+
+  // reach root page
+  BUSTUB_ASSERT(context.write_set_.size() == 1, "BPlusTree::Insert(): context write set has not only root page");
+  auto &root_page = *(context.write_set_.back().AsMut<InternalPage>());
+  if (root_page.IsEmpty()) {
+    // delete empty root page
+    // assign new root page
+    context.write_set_.back().Drop();
+    context.write_set_.pop_back();
+    bpm_->DeletePage(context.root_page_id_);
+    context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_root_page_id;
+  }
 }
 
 /*****************************************************************************

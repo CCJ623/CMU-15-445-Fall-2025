@@ -13,8 +13,9 @@
 #pragma once
 
 #include <sys/types.h>
+#include <algorithm>
 #include <iterator>
-#include <queue>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -79,10 +80,29 @@ class BPlusTreeInternalPage : public BPlusTreePage {
 
   auto ValueAt(int index) const -> ValueType;
   auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> ValueType;
+  auto GetValueIndex(const KeyType &key, const KeyComparator &comparator) const -> size_t;
+  void PushFront(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
+  void PushBack(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
   auto GetSplitPos(const KeyType &key, const KeyComparator &comparator) const -> uint;
   auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
       -> std::optional<std::vector<MappingType>>;
+  void Remove(size_t index);
+  void Remove(const KeyType &key, const KeyComparator &comparator);
   auto Contains(const KeyType &key, const KeyComparator &comparator) const -> bool;
+  auto EvictMinKv() -> MappingType;
+  auto EvictMaxKv() -> MappingType;
+  void Merge(BPlusTreeInternalPage &another, const KeyType &mid_key, const KeyComparator &comparator);
+  auto FindKey(const KeyType &key, const KeyComparator &comparator) const -> std::optional<size_t> {
+    auto key_iter = std::lower_bound(begin(key_array_), end(key_array_), key, comparator);
+    if (comparator(key, *key_iter) != 0) {
+      return std::nullopt;
+    }
+    return std::distance(begin(key_array_), key_iter) + 1;
+  }
+  auto GetSiblings(const KeyType &key, const KeyComparator &comparator) const -> std::pair<page_id_t, page_id_t>;
+  auto GetSiblings(size_t index) const -> std::pair<page_id_t, page_id_t>;
+
+  auto IsEmpty() const -> bool { return GetSize() <= 1; }
 
   /**
    * @brief For test only, return a string representing all keys in
@@ -144,7 +164,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   }
 
   template <typename T, std::size_t N>
-  auto cend(T (&array)[N]) const -> T * {
+  auto cend(T (&array)[N]) const -> const T * {
     return end(array);
   }
 

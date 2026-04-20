@@ -12,12 +12,15 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
 #include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "common/macros.h"
 #include "storage/page/b_plus_tree_page.h"
 
 namespace bustub {
@@ -83,9 +86,16 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto KeyAt(int index) const -> KeyType;
   auto ValueAt(int index) const -> ValueType;
   auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> std::optional<ValueType>;
+  void PushFront(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool is_in_tombstones);
+  void PushBack(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool is_in_tombstones);
   auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
       -> std::optional<std::vector<MappingType>>;
+  void Remove(size_t index);
+  void Remove(const KeyType &key, const KeyComparator &comparator);
   auto Contains(const KeyType &key, const KeyComparator &comparator) const -> bool;
+  auto EvictMinKv() -> std::pair<MappingType, bool>;
+  auto EvictMaxKv() -> std::pair<MappingType, bool>;
+  void Merge(BPlusTreeLeafPage &another, const KeyComparator &comparator);
   // return true if leaf is really full
   auto IsLeafFull() const -> bool { return IsFull() && num_tombstones_ == 0; }
 
@@ -128,6 +138,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   page_id_t next_page_id_;
   size_t num_tombstones_;
   // Fixed-size tombstone buffer (indexes into key_array_ / rid_array_).
+  // ordered by indexes
   size_t tombstones_[LEAF_PAGE_TOMB_CNT];
   // Array members for page data.
   KeyType key_array_[LEAF_PAGE_SLOT_CNT];
@@ -136,7 +147,45 @@ class BPlusTreeLeafPage : public BPlusTreePage {
 
   void InsertHelper(KeyIterType key_iter, const KeyType &key, const ValueType &value, const KeyComparator &comparator);
   void InsertHelper(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
-  void EvictTombstones();
+  auto EvictTombstones() -> size_t;
+  auto IsTombstonesFull() const -> bool { return num_tombstones_ == LEAF_PAGE_TOMB_CNT; }
+  auto IsTombstonesEmpty() const -> bool { return num_tombstones_ == 0; }
+  auto TombstonesContains(size_t index) const -> bool {
+    return std::binary_search(TombstonesBegin(), TombstonesEnd(), index);
+  }
+  void TombstonesInsert(size_t index) {
+    BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesInsert(): tombstones is full");
+    auto insert_iter = std::upper_bound(TombstonesBegin(), TombstonesEnd(), index);
+    std::move_backward(insert_iter, TombstonesEnd(), TombstonesEnd() + 1);
+    *insert_iter = index;
+    ++num_tombstones_;
+  }
+  void TombstonesPushFront(size_t index) {
+    BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesPushFront(): tombstones is full");
+    BUSTUB_ASSERT(std::upper_bound(TombstonesBegin(), TombstonesEnd(), index) == TombstonesBegin(),
+                  "BPlusTreeLeafPage::TombstonesPushFront(): index in unordered");
+
+    std::move_backward(TombstonesBegin(), TombstonesEnd(), TombstonesEnd() + 1);
+    tombstones_[0] = index;
+    ++num_tombstones_;
+  }
+  void TombstonesPushBack(size_t index) {
+    BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesPushBack(): tombstones is full");
+    BUSTUB_ASSERT(std::upper_bound(TombstonesBegin(), TombstonesEnd(), index) == TombstonesEnd(),
+                  "BPlusTreeLeafPage::TombstonesPushBack(): index in unordered");
+    tombstones_[num_tombstones_] = index;
+    ++num_tombstones_;
+  }
+  void TombstonesPopFront() {
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesPopFront(): tombstones is empty");
+
+    std::copy(TombstonesBegin() + 1, TombstonesEnd(), TombstonesBegin());
+    --num_tombstones_;
+  }
+  void TombstonesPopBack() {
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesPushBack(): tombstones is empty");
+    --num_tombstones_;
+  }
 
   auto ConvertToStdComparator(const KeyComparator &comparator) const {
     return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
@@ -158,9 +207,14 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   }
 
   template <typename T, std::size_t N>
-  auto cend(T (&array)[N]) const -> T * {
+  auto cend(T (&array)[N]) const -> const T * {
     return end(array);
   }
+
+  auto TombstonesBegin() -> size_t * { return tombstones_; }
+  auto TombstonesBegin() const -> const size_t * { return tombstones_; }
+  auto TombstonesEnd() -> size_t * { return tombstones_ + num_tombstones_; }
+  auto TombstonesEnd() const -> const size_t * { return tombstones_ + num_tombstones_; }
 
   auto GetCorrespondValueIter(ConstKeyIterType key_iter) const -> ConstValueIterType {
     return cbegin(rid_array_) + std::distance(cbegin(key_array_), (key_iter));

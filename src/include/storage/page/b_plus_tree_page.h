@@ -15,7 +15,6 @@
 #include <cassert>
 #include <climits>
 #include <cstdlib>
-#include <string>
 
 #include "buffer/buffer_pool_manager.h"
 #include "storage/index/generic_key.h"
@@ -63,7 +62,10 @@ class BPlusTreePage {
   auto GetMinSize() const -> int;
 
   auto IsFull() const -> bool { return GetSize() == GetMaxSize(); }
+  auto IsHealthy() const -> bool { return GetSize() > GetMinSize(); }
+  auto IsCritical() const -> bool { return GetSize() == GetMinSize(); }
   auto IsInsufficient() const -> bool { return GetSize() < GetMinSize(); }
+  auto IsEmpty() const -> bool { return GetSize() == 0; }
 
   /*
    * TODO(P2): Remove __attribute__((__unused__)) if you intend to use the fields.
