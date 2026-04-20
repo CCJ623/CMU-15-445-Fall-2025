@@ -22,6 +22,7 @@
 #include "common/macros.h"
 #include "common/rid.h"
 #include "storage/index/b_plus_tree_debug.h"
+#include "storage/index/index_iterator.h"
 #include "storage/page/b_plus_tree_header_page.h"
 #include "storage/page/b_plus_tree_internal_page.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
@@ -624,7 +625,17 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
+  if (IsEmpty()) {
+    return End();
+  }
+  auto header_page_read_guard = bpm_->ReadPage(header_page_id_);
+  auto page_guard = bpm_->ReadPage(header_page_read_guard.As<BPlusTreeHeaderPage>()->root_page_id_);
+  for (auto page = page_guard.As<InternalPage>(); !page->IsLeafPage();
+       page_guard = bpm_->ReadPage(page->ValueAt(0)), page = page_guard.As<InternalPage>()) {
+  }
+  return INDEXITERATOR_TYPE(bpm_.get(), page_guard.GetPageId(), 0);
+}
 
 /**
  * @brief Input parameter is low key, find the leaf page that contains the input key
@@ -632,7 +643,23 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { UNIMPLEMENTED("TODO(P2): Ad
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
+  if (IsEmpty()) {
+    return End();
+  }
+  auto header_page_read_guard = bpm_->ReadPage(header_page_id_);
+  auto page_guard = bpm_->ReadPage(header_page_read_guard.As<BPlusTreeHeaderPage>()->root_page_id_);
+  for (auto page = page_guard.As<InternalPage>(); !page->IsLeafPage();
+       page_guard = bpm_->ReadPage(page->GetValue(key, comparator_)), page = page_guard.As<InternalPage>()) {
+  }
+  auto &page = *(page_guard.As<LeafPage>());
+  auto key_index = page.FindLowKey(key, comparator_);
+  if (key_index == static_cast<size_t>(page.GetSize())) {
+    // key not exist
+    return End();
+  }
+  return INDEXITERATOR_TYPE(bpm_.get(), page_guard.GetPageId(), key_index);
+}
 
 /**
  * @brief Input parameter is void, construct an index iterator representing the end
@@ -640,7 +667,7 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { UNIMPLEME
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(bpm_.get(), INVALID_PAGE_ID, 0); }
 
 /**
  * @return Page id of the root of this tree

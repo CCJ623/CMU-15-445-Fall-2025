@@ -14,6 +14,9 @@
  * index_iterator.cpp
  */
 #include <cassert>
+#include <cstddef>
+#include "common/config.h"
+#include "storage/page/page_guard.h"
 
 #include "storage/index/index_iterator.h"
 
@@ -24,21 +27,42 @@ namespace bustub {
  * set your own input parameters
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-INDEXITERATOR_TYPE::IndexIterator() = default;
+INDEXITERATOR_TYPE::IndexIterator(TracedBufferPoolManager *bpm, page_id_t page_id, size_t offset)
+    : bpm_(bpm), page_id_(page_id), offset_(offset) {
+  if (page_id_ != INVALID_PAGE_ID) {
+    guard_ = bpm_->ReadPage(page_id_);
+  }
+}
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::~IndexIterator() = default;  // NOLINT
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto INDEXITERATOR_TYPE::IsEnd() -> bool { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto INDEXITERATOR_TYPE::IsEnd() -> bool { return page_id_ == INVALID_PAGE_ID; }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::operator*() -> std::pair<const KeyType &, const ValueType &> {
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
+  auto &page = *(guard_.As<LeafPage>());
+  return {page.KeyAt(offset_), page.ValueAt(offset_)};
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
+  ++offset_;
+  auto &page = *(guard_.As<LeafPage>());
+  if (offset_ != static_cast<size_t>(page.GetSize())) {
+    return *this;
+  }
+
+  offset_ = 0;
+  page_id_ = page.GetNextPageId();
+  if (page_id_ == INVALID_PAGE_ID) {
+    guard_ = ReadPageGuard{};
+  } else {
+    guard_ = bpm_->ReadPage(page_id_);
+  }
+  return *this;
+}
 
 template class IndexIterator<GenericKey<4>, RID, GenericComparator<4>>;
 

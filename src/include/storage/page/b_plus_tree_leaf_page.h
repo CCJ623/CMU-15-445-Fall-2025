@@ -83,8 +83,9 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   // Helper methods
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
-  auto KeyAt(int index) const -> KeyType;
-  auto ValueAt(int index) const -> ValueType;
+  auto KeyAt(int index) const -> const KeyType &;
+  auto ValueAt(int index) const -> const ValueType &;
+  auto FindLowKey(const KeyType &key, const KeyComparator &comparator) const -> size_t;
   auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> std::optional<ValueType>;
   void PushFront(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool is_in_tombstones);
   void PushBack(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool is_in_tombstones);
