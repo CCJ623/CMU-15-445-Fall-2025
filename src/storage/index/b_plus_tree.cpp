@@ -134,11 +134,10 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   if (header_page_id_ == INVALID_PAGE_ID) {
     return false;
   }
-  // Declaration of context instance. Using the Context is not necessary but advised.
-  Context context;
 
   // optimistic try to insert, return false if failed
-  auto optimistic_try = [this, &context, &key, &value]() -> bool {
+  auto optimistic_try = [this, &key, &value]() -> bool {
+    Context context;
     // read root page
     auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
     WritePageGuard leaf_page_guard;
@@ -215,6 +214,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
 
   // optimistic failed
   // pessimistic way
+  Context context;
   context.header_page_ = bpm_->WritePage(header_page_id_);
   context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
   context.write_set_.push_back(bpm_->WritePage(context.root_page_id_));
