@@ -13,9 +13,14 @@
 /**
  * index_iterator.cpp
  */
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <vector>
 #include "common/config.h"
+#include "common/macros.h"
+#include "storage/index/generic_key.h"
+#include "storage/page/b_plus_tree_page.h"
 #include "storage/page/page_guard.h"
 
 #include "storage/index/index_iterator.h"
@@ -27,8 +32,9 @@ namespace bustub {
  * set your own input parameters
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-INDEXITERATOR_TYPE::IndexIterator(TracedBufferPoolManager *bpm, page_id_t page_id, size_t offset)
-    : bpm_(bpm), page_id_(page_id), offset_(offset) {
+INDEXITERATOR_TYPE::IndexIterator(TracedBufferPoolManager *bpm, page_id_t page_id, size_t offset,
+                                  KeyComparator comparator)
+    : bpm_(bpm), page_id_(page_id), offset_(offset), comparator_(comparator) {
   if (page_id_ != INVALID_PAGE_ID) {
     guard_ = bpm_->ReadPage(page_id_);
   }
@@ -48,20 +54,48 @@ auto INDEXITERATOR_TYPE::operator*() -> std::pair<const KeyType &, const ValueTy
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
-  ++offset_;
-  auto &page = *(guard_.As<LeafPage>());
-  if (offset_ != static_cast<size_t>(page.GetSize())) {
+  if (IsEnd()) {
+    // end
     return *this;
   }
 
-  offset_ = 0;
-  page_id_ = page.GetNextPageId();
-  if (page_id_ == INVALID_PAGE_ID) {
-    guard_ = ReadPageGuard{};
-  } else {
-    guard_ = bpm_->ReadPage(page_id_);
+  const KeyType &key = (guard_.As<LeafPage>())->KeyAt(offset_);
+  auto tombstones = (guard_.As<LeafPage>())->GetTombstones();
+  auto tombstones_iter =
+      std::upper_bound(tombstones.cbegin(), tombstones.cend(), key, ConvertToStdComparator<KeyType>(comparator_));
+  ++offset_;
+  while (true) {
+    // find valid key
+    auto &page = *(guard_.As<LeafPage>());
+
+    // make sure offset is right
+    BUSTUB_ASSERT(tombstones_iter == tombstones.cend() || comparator_(page.KeyAt(offset_), *tombstones_iter) <= 0,
+                  "IndexIterator::operator++(): offset wrong");
+
+    if (offset_ == static_cast<size_t>(page.GetSize())) {
+      // jump to next page
+      offset_ = 0;
+      page_id_ = page.GetNextPageId();
+      if (page_id_ == INVALID_PAGE_ID) {
+        guard_ = ReadPageGuard{};
+        return *this;
+      } else {
+        guard_ = bpm_->ReadPage(page_id_);
+        tombstones = (guard_.As<LeafPage>())->GetTombstones();
+        tombstones_iter = tombstones.cbegin();
+      }
+      continue;
+    }
+
+    // same page
+    const auto &key = page.KeyAt(offset_);
+    if (tombstones_iter == tombstones.cend() || comparator_(key, *tombstones_iter) != 0) {
+      // impossible to be in tombstones
+      return *this;
+    }
+    ++offset_;
+    ++tombstones_iter;
   }
-  return *this;
 }
 
 template class IndexIterator<GenericKey<4>, RID, GenericComparator<4>>;

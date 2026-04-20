@@ -369,6 +369,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
         root_page_guard.As<InternalPage>()->IsLeafPage()) {
       // root is leaf
       root_page_guard.Drop();
+      // root can be changed here
       leaf_page_guard = bpm_->WritePage(context.root_page_id_);
     } else {
       // we must maintain two page guard, because we need to get write page guard of leaf page
@@ -384,6 +385,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
           // get write page guard of leaf page and quit
           auto leaf_page_id = next_page_guard.GetPageId();
           next_page_guard.Drop();
+          // leaf can be changed here
           leaf_page_guard = bpm_->WritePage(leaf_page_id);
           break;
         }
@@ -393,7 +395,6 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
 
     // leaf_page_guard is ready here
     auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>());
-    BUSTUB_ASSERT(leaf_page.Contains(key, comparator_), "BPlusTree::Remove(): try to remove a non-exist key");
     if (!leaf_page.Contains(key, comparator_)) {
       // key not exist
       return true;
@@ -510,6 +511,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     if (target_page.IsHealthy()) {
       // healthy, no need to merge, steal and return
       if (is_target_left) {
+        // target at left
         if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
           auto [kv, is_in_tombstones] = target_page.EvictMaxKv();
           current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
@@ -519,12 +521,13 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
         }
 
       } else {
+        // target at right
         if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
           auto [kv, is_in_tombstones] = target_page.EvictMinKv();
-          current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
+          current_page.PushBack(kv.first, kv.second, comparator_, is_in_tombstones);
         } else {
           auto kv = target_page.EvictMinKv();
-          current_page.PushFront(kv.first, kv.second, comparator_);
+          current_page.PushBack(kv.first, kv.second, comparator_);
         }
       }
       return;
@@ -634,7 +637,14 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
   for (auto page = page_guard.As<InternalPage>(); !page->IsLeafPage();
        page_guard = bpm_->ReadPage(page->ValueAt(0)), page = page_guard.As<InternalPage>()) {
   }
-  return INDEXITERATOR_TYPE(bpm_.get(), page_guard.GetPageId(), 0);
+  const auto &page = *page_guard.As<LeafPage>();
+  INDEXITERATOR_TYPE iter(bpm_.get(), page_guard.GetPageId(), 0, comparator_);
+  auto tombstones = page.GetTombstones();
+  if (!tombstones.empty() && comparator_(tombstones.front(), page.KeyAt(0)) == 0) {
+    // first key is in tombstones
+    ++iter;
+  }
+  return std::move(iter);
 }
 
 /**
@@ -658,7 +668,7 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
     // key not exist
     return End();
   }
-  return INDEXITERATOR_TYPE(bpm_.get(), page_guard.GetPageId(), key_index);
+  return INDEXITERATOR_TYPE(bpm_.get(), page_guard.GetPageId(), key_index, comparator_);
 }
 
 /**
@@ -667,7 +677,9 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
  * @return : index iterator
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(bpm_.get(), INVALID_PAGE_ID, 0); }
+auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE {
+  return INDEXITERATOR_TYPE(bpm_.get(), INVALID_PAGE_ID, 0, comparator_);
+}
 
 /**
  * @return Page id of the root of this tree
