@@ -111,7 +111,6 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::ValueAt(int index) const -> ValueType {
   return rid_array_[index];
 }
 
-// assume key is not in tombstones
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetValue(const KeyType &key, const KeyComparator &comparator) const
     -> std::optional<ValueType> {
@@ -122,7 +121,9 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetValue(const KeyType &key, const KeyComparato
   }
   // key exist
   auto index = std::distance(cbegin(key_array_), key_iter);
-  BUSTUB_ASSERT(!TombstonesContains(index), "BPlusTreeLeafPage::GetValue(): key is in tombstones");
+  if (TombstonesContains(index)) {
+    return std::nullopt;
+  }
   return ValueAt(index);
 }
 
@@ -240,7 +241,6 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(size_t index) {
       --index;
     }
     TombstonesInsert(index);
-    ChangeSizeBy(-1);
   } else {
     // tombstones not enabled
     auto key_evict_iter = begin(key_array_) + index;
@@ -336,7 +336,7 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComparator &comparator) {
   BUSTUB_ASSERT(GetSize() + another.GetSize() >= GetMinSize(), "BPlusTreeInternalPage::Merge(): invalid after merge");
   if (GetSize() != 0 && another.GetSize() != 0) {
-    BUSTUB_ASSERT(0 && comparator(*(end(key_array_) - 1), *(another.end(another.key_array_) - 1)) < 0,
+    BUSTUB_ASSERT(comparator(*(cend(key_array_) - 1), *another.cbegin(another.key_array_)) < 0,
                   "BPlusTreeInternalPage::Merge(): unorder merge");
   }
 
@@ -354,6 +354,10 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComp
       // key in tombstones
       is_in_tombstones = true;
       ++tombstones_iter;
+    }
+    if (is_in_tombstones && IsTombstonesFull()) {
+      // no place for this KV
+      continue;
     }
     PushBack(key, value, comparator, is_in_tombstones);
   }
