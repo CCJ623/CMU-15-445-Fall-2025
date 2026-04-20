@@ -257,7 +257,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator 
   BUSTUB_ASSERT(GetValue(key, comparator) != std::nullopt,
                 "BPlusTreeInternalPage::Remove(): try to remove a non-exist key");
 
-  auto key_iter = std::lower_bound(begin(key_array_), end(key_array_), key, comparator);
+  auto key_iter = std::lower_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
   auto key_index = std::distance(begin(key_array_), key_iter);
   Remove(key_index);
 }
@@ -265,7 +265,8 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator 
 // return true if key in key_array_ and not in tombstones
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::Contains(const KeyType &key, const KeyComparator &comparator) const -> bool {
-  auto is_in_key_array = std::binary_search(begin(key_array_), end(key_array_), key, comparator);
+  auto is_in_key_array =
+      std::binary_search(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
   if (!is_in_key_array) {
     return false;
   }

@@ -91,7 +91,7 @@ TEST(BPlusTreeTests, DeleteTestNoIterator) {
   delete bpm;
 }
 
-TEST(BPlusTreeTests, DISABLED_OptimisticDeleteTest) {
+TEST(BPlusTreeTests, OptimisticDeleteTest) {
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
 
