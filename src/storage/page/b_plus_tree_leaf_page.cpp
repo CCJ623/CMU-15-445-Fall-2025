@@ -169,6 +169,16 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
     -> std::optional<std::vector<MappingType>> {
   BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::Insert(): try to insert a key which already exist");
 
+  {
+    auto index = FindLowKey(key, comparator);
+    if (comparator(KeyAt(index), key) == 0 && std::binary_search(TombstonesBegin(), TombstonesEnd(), index)) {
+      // key in tombstones, revive
+      rid_array_[index] = value;
+      TombstonesRemove(index);
+      return std::nullopt;
+    }
+  }
+
   if (!IsFull()) {
     // not full
     InsertHelper(key, value, comparator);

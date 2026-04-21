@@ -163,6 +163,14 @@ class BPlusTreeLeafPage : public BPlusTreePage {
     *insert_iter = index;
     ++num_tombstones_;
   }
+  void TombstonesRemove(size_t index) {
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesInsert(): tombstones is full");
+    BUSTUB_ASSERT(std::binary_search(TombstonesBegin(), TombstonesEnd(), index),
+                  "BPlusTreeLeafPage::TombstonesInsert(): index not in tombstones");
+    auto remove_iter = std::lower_bound(TombstonesBegin(), TombstonesEnd(), index);
+    std::copy(remove_iter + 1, TombstonesEnd(), remove_iter);
+    --num_tombstones_;
+  }
   void TombstonesPushFront(size_t index) {
     BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesPushFront(): tombstones is full");
     BUSTUB_ASSERT(std::upper_bound(TombstonesBegin(), TombstonesEnd(), index) == TombstonesBegin(),
