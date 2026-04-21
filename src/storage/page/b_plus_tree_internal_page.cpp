@@ -131,7 +131,7 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::PushFront(const KeyType &key, const ValueTy
                                                const KeyComparator &comparator) {
   BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::PushFront(): try to insert a key which already exist");
   BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushFront(): try to insert a key to a full page");
-  BUSTUB_ASSERT(comparator(key, KeyAt(0)) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
+  BUSTUB_ASSERT(comparator(key, FrontKey()) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
 
   InsertHelper(begin(key_array_), key, value, comparator);
 }
@@ -257,6 +257,7 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::EvictMinKv() -> MappingType {
   // remove kv
   std::copy(begin(key_array_) + 1, end(key_array_), begin(key_array_));
   std::copy(begin(page_id_array_) + 1, end(page_id_array_), begin(page_id_array_));
+  ChangeSizeBy(-1);
   return result;
 }
 

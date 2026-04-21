@@ -145,7 +145,8 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   }
 
   // optimistic try to insert, return false if failed
-  auto optimistic_try = [this, &key, &value]() -> bool {
+  enum class OptimisticTryResult { kSuccess, kFailed, kKeyExist };
+  auto optimistic_try = [this, &key, &value]() -> OptimisticTryResult {
     Context context;
     // read root page
     auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
@@ -203,22 +204,25 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
 
     if (auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>()); leaf_page.Contains(key, comparator_)) {
       // key already exist
-      return false;
+      return OptimisticTryResult::kKeyExist;
     }
     if (auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>()); !leaf_page.IsLeafFull()) {
       // leaf not full, no need to split
       leaf_page.Insert(key, value, comparator_);
-      return true;
+      return OptimisticTryResult::kSuccess;
     }
 
     // need to split
     // reacquire write latches from top
-    return false;
+    return OptimisticTryResult::kFailed;
   };
 
-  if (optimistic_try()) {
+  auto optimistic_try_result = optimistic_try();
+  if (optimistic_try_result == OptimisticTryResult::kSuccess) {
     // success
     return true;
+  } else if (optimistic_try_result == OptimisticTryResult::kKeyExist) {
+    return false;
   }
 
   // optimistic failed
@@ -547,13 +551,17 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       if (is_target_left) {
         // target at left
         push_up_index = index;
-        push_up_key = upstream_page.KeyAt(upstream_page.GetSize() - 1);
         if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+          // is leaf
           auto [kv, is_in_tombstones] = target_page.EvictMaxKv();
           current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
+          push_up_key = current_page.FrontKey();
         } else {
+          // is internal
+          // exchange key with upstream
           auto kv = target_page.EvictMaxKv();
-          current_page.PushFront(kv.first, kv.second, comparator_);
+          current_page.PushFront(upstream_page.KeyAt(push_up_index), kv.second, comparator_);
+          push_up_key = kv.first;
         }
 
         debuger.Print(fmt::format("Remove(): this[{}] steal from left[{}], push up key[{}], at index[{}]\n",
@@ -564,13 +572,17 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
         // target at right
         push_up_index = index + 1;
         if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+          // is leaf
           auto [kv, is_in_tombstones] = target_page.EvictMinKv();
           current_page.PushBack(kv.first, kv.second, comparator_, is_in_tombstones);
+          push_up_key = target_page.FrontKey();
         } else {
+          // is internal
+          // exchange key with upstream
           auto kv = target_page.EvictMinKv();
-          current_page.PushBack(kv.first, kv.second, comparator_);
+          current_page.PushBack(upstream_page.KeyAt(push_up_index), kv.second, comparator_);
+          push_up_key = kv.first;
         }
-        push_up_key = target_page.KeyAt(1);
 
         debuger.Print(fmt::format("Remove(): this[{}] steal from right[{}], push up key[{}], at index[{}]\n",
                                   current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),

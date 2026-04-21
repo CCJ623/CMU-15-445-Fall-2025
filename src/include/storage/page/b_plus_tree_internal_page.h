@@ -68,6 +68,8 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   void Init(int max_size, const std::vector<MappingType> &kvs);
 
   auto KeyAt(int index) const -> KeyType;
+  auto BackKey() const -> const KeyType & { return *end(key_array_); }
+  auto FrontKey() const -> const KeyType & { return *begin(key_array_); }
 
   void SetKeyAt(int index, const KeyType &key);
   void SetValueAt(int index, const ValueType &value);
