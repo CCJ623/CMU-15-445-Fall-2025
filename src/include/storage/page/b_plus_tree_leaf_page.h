@@ -84,8 +84,8 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
   auto KeyAt(int index) const -> const KeyType &;
-  auto BackKey() const -> const KeyType & { return *end(key_array_); }
-  auto FrontKey() const -> const KeyType & { return *begin(key_array_); }
+  auto BackKey() const -> const KeyType & { return *End(key_array_); }
+  auto FrontKey() const -> const KeyType & { return *Begin(key_array_); }
   auto ValueAt(int index) const -> const ValueType &;
   auto FindLowKey(const KeyType &key, const KeyComparator &comparator) const -> size_t;
   auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> std::optional<ValueType>;
@@ -195,23 +195,23 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   }
 
   template <typename T, std::size_t N>
-  auto begin(T (&array)[N]) const -> T * {
+  auto Begin(T (&array)[N]) const -> T * {
     return std::begin(array);
   }
 
   template <typename T, std::size_t N>
-  auto cbegin(T (&array)[N]) const -> const T * {
-    return begin(array);
+  auto Cbegin(T (&array)[N]) const -> const T * {
+    return Begin(array);
   }
 
   template <typename T, std::size_t N>
-  auto end(T (&array)[N]) const -> T * {
+  auto End(T (&array)[N]) const -> T * {
     return std::begin(array) + GetSize();
   }
 
   template <typename T, std::size_t N>
-  auto cend(T (&array)[N]) const -> const T * {
-    return end(array);
+  auto Cend(T (&array)[N]) const -> const T * {
+    return End(array);
   }
 
   auto TombstonesBegin() -> size_t * { return tombstones_; }
@@ -220,11 +220,11 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto TombstonesEnd() const -> const size_t * { return tombstones_ + num_tombstones_; }
 
   auto GetCorrespondValueIter(ConstKeyIterType key_iter) const -> ConstValueIterType {
-    return cbegin(rid_array_) + std::distance(cbegin(key_array_), (key_iter));
+    return Cbegin(rid_array_) + std::distance(Cbegin(key_array_), (key_iter));
   }
 
   auto GetCorrespondValueIter(KeyIterType key_iter) -> ValueIterType {
-    return begin(rid_array_) + std::distance(begin(key_array_), (key_iter));
+    return Begin(rid_array_) + std::distance(Begin(key_array_), (key_iter));
   }
 };
 

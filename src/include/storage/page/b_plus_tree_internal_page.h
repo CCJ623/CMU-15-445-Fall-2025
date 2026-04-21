@@ -68,8 +68,8 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   void Init(int max_size, const std::vector<MappingType> &kvs);
 
   auto KeyAt(int index) const -> KeyType;
-  auto BackKey() const -> const KeyType & { return *end(key_array_); }
-  auto FrontKey() const -> const KeyType & { return *begin(key_array_); }
+  auto BackKey() const -> const KeyType & { return *End(key_array_); }
+  auto FrontKey() const -> const KeyType & { return *Begin(key_array_); }
 
   void SetKeyAt(int index, const KeyType &key, const KeyComparator &comparator);
   void SetValueAt(int index, const ValueType &value);
@@ -95,11 +95,11 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   auto EvictMaxKv() -> MappingType;
   void Merge(BPlusTreeInternalPage &another, const KeyType &mid_key, const KeyComparator &comparator);
   auto FindKey(const KeyType &key, const KeyComparator &comparator) const -> std::optional<size_t> {
-    auto key_iter = std::lower_bound(begin(key_array_), end(key_array_), key, comparator);
+    auto key_iter = std::lower_bound(Begin(key_array_), End(key_array_), key, comparator);
     if (comparator(key, *key_iter) != 0) {
       return std::nullopt;
     }
-    return std::distance(begin(key_array_), key_iter) + 1;
+    return std::distance(Begin(key_array_), key_iter) + 1;
   }
   auto GetSiblings(const KeyType &key, const KeyComparator &comparator) const -> std::pair<page_id_t, page_id_t>;
   auto GetSiblings(size_t index) const -> std::pair<page_id_t, page_id_t>;
@@ -146,7 +146,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   }
 
   template <typename T, std::size_t N>
-  auto begin(T (&array)[N]) const -> T * {
+  auto Begin(T (&array)[N]) const -> T * {
     if constexpr (std::is_same_v<std::remove_const_t<T>, KeyType>) {
       // KeyType
       return std::begin(array) + 1;
@@ -156,26 +156,26 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   }
 
   template <typename T, std::size_t N>
-  auto cbegin(T (&array)[N]) const -> const T * {
-    return begin(array);
+  auto Cbegin(T (&array)[N]) const -> const T * {
+    return Begin(array);
   }
 
   template <typename T, std::size_t N>
-  auto end(T (&array)[N]) const -> T * {
+  auto End(T (&array)[N]) const -> T * {
     return std::begin(array) + GetSize();
   }
 
   template <typename T, std::size_t N>
-  auto cend(T (&array)[N]) const -> const T * {
-    return end(array);
+  auto Cend(T (&array)[N]) const -> const T * {
+    return End(array);
   }
 
   auto GetCorrespondValueIter(ConstKeyIterType key_iter) const -> ConstValueIterType {
-    return cbegin(page_id_array_) + std::distance(cbegin(key_array_), (key_iter)) + 1;
+    return Cbegin(page_id_array_) + std::distance(Cbegin(key_array_), (key_iter)) + 1;
   }
 
   auto GetCorrespondValueIter(KeyIterType key_iter) -> ValueIterType {
-    return begin(page_id_array_) + std::distance(begin(key_array_), (key_iter)) + 1;
+    return Begin(page_id_array_) + std::distance(Begin(key_array_), (key_iter)) + 1;
   }
 };
 

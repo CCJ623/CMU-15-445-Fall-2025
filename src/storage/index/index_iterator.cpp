@@ -62,7 +62,7 @@ auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
   const KeyType &key = (guard_.As<LeafPage>())->KeyAt(offset_);
   auto tombstones = (guard_.As<LeafPage>())->GetTombstones();
   auto tombstones_iter =
-      std::upper_bound(tombstones.cbegin(), tombstones.cend(), key, ConvertToStdComparator<KeyType>(comparator_));
+      std::upper_bound(tombstones.cbegin(), tombstones.cend(), key, ConvertToStdComparator(comparator_));
   ++offset_;
   while (true) {
     // find valid key
@@ -77,13 +77,15 @@ auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
       offset_ = 0;
       page_id_ = page.GetNextPageId();
       if (page_id_ == INVALID_PAGE_ID) {
+        // reach end
         guard_ = ReadPageGuard{};
         return *this;
-      } else {
-        guard_ = bpm_->ReadPage(page_id_);
-        tombstones = (guard_.As<LeafPage>())->GetTombstones();
-        tombstones_iter = tombstones.cbegin();
       }
+
+      // not reach end
+      guard_ = bpm_->ReadPage(page_id_);
+      tombstones = (guard_.As<LeafPage>())->GetTombstones();
+      tombstones_iter = tombstones.cbegin();
       continue;
     }
 

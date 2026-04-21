@@ -109,10 +109,4 @@ class GenericComparator {
  private:
   Schema *key_schema_;
 };
-
-template <typename KeyType, typename KeyComparator>
-auto ConvertToStdComparator(const KeyComparator &comparator) {
-  return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
-}
-
 }  // namespace bustub

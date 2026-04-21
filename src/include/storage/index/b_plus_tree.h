@@ -55,7 +55,7 @@ class Debuger {
       : function_name_(function_name), function_(std::move(function)) {
     if constexpr (DEBUG_MODE) {
       auto str = InvokeHelper();
-      std::scoped_lock<std::mutex> lock{lock_};
+      std::scoped_lock<std::mutex> lock{latch};
       std::cout << ">>> START " << function_name_ << " <<<\n";
       PrintThreadId();
       std::cout << str << "\n";
@@ -65,7 +65,7 @@ class Debuger {
   ~Debuger() {
     if constexpr (DEBUG_MODE) {
       auto str = InvokeHelper();
-      std::scoped_lock<std::mutex> lock{lock_};
+      std::scoped_lock<std::mutex> lock{latch};
       std::cout << "<<< END " << function_name_ << " >>>\n";
       PrintThreadId();
       std::cout << str << "\n";
@@ -74,7 +74,7 @@ class Debuger {
 
   void Print(std::string_view str) {
     if constexpr (DEBUG_MODE) {
-      std::scoped_lock<std::mutex> lock{lock_};
+      std::scoped_lock<std::mutex> lock{latch};
       PrintThreadId();
       std::cout << str;
     }
@@ -83,7 +83,7 @@ class Debuger {
   void Invoke() {
     if constexpr (DEBUG_MODE) {
       auto str = InvokeHelper();
-      std::scoped_lock<std::mutex> lock{lock_};
+      std::scoped_lock<std::mutex> lock{latch};
       PrintThreadId();
       std::cout << str << "\n";
     }
@@ -91,7 +91,7 @@ class Debuger {
 
  private:
   void PrintThreadId() { std::cout << std::this_thread::get_id() << "\n"; }
-  std::string InvokeHelper() {
+  auto InvokeHelper() -> std::string {
     if (function_) {
       return function_();
     }
@@ -100,7 +100,7 @@ class Debuger {
 
   std::string_view function_name_;
   std::function<std::string()> function_;
-  static std::mutex lock_;
+  static std::mutex latch;
 };
 }  // namespace b_plus_tree
 

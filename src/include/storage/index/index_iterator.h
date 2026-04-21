@@ -35,7 +35,7 @@ class IndexIterator {
  public:
   // you may define your own constructor based on your member variables
   IndexIterator(TracedBufferPoolManager *bpm, page_id_t page_id, size_t offset, KeyComparator comparator);
-  IndexIterator(IndexIterator &&another) = default;
+  IndexIterator(IndexIterator &&another) noexcept = default;
   ~IndexIterator();  // NOLINT
 
   auto IsEnd() -> bool;
@@ -57,6 +57,10 @@ class IndexIterator {
   ReadPageGuard guard_;
   size_t offset_;
   KeyComparator comparator_;
+
+  auto ConvertToStdComparator(const KeyComparator &comparator) {
+    return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
+  }
 };
 
 }  // namespace bustub

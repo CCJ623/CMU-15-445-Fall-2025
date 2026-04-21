@@ -113,20 +113,20 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::ValueAt(int index) const -> const ValueType & {
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::FindLowKey(const KeyType &key, const KeyComparator &comparator) const -> size_t {
-  auto key_iter = std::lower_bound(cbegin(key_array_), cend(key_array_), key, ConvertToStdComparator(comparator));
-  return std::distance(cbegin(key_array_), key_iter);
+  auto key_iter = std::lower_bound(Cbegin(key_array_), Cend(key_array_), key, ConvertToStdComparator(comparator));
+  return std::distance(Cbegin(key_array_), key_iter);
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetValue(const KeyType &key, const KeyComparator &comparator) const
     -> std::optional<ValueType> {
-  auto key_iter = std::lower_bound(cbegin(key_array_), cend(key_array_), key, ConvertToStdComparator(comparator));
-  if (key_iter == cend(key_array_) || comparator(key, *key_iter) != 0) {
+  auto key_iter = std::lower_bound(Cbegin(key_array_), Cend(key_array_), key, ConvertToStdComparator(comparator));
+  if (key_iter == Cend(key_array_) || comparator(key, *key_iter) != 0) {
     // key not exist
     return std::nullopt;
   }
   // key exist
-  auto index = std::distance(cbegin(key_array_), key_iter);
+  auto index = std::distance(Cbegin(key_array_), key_iter);
   if (TombstonesContains(index)) {
     return std::nullopt;
   }
@@ -140,7 +140,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::PushFront(const KeyType &key, const ValueType &
   BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushFront(): try to insert a key to a full page");
   BUSTUB_ASSERT(comparator(key, KeyAt(0)) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
 
-  InsertHelper(begin(key_array_), key, value, comparator);
+  InsertHelper(Begin(key_array_), key, value, comparator);
   if (is_in_tombstones) {
     TombstonesPushFront(0);
   }
@@ -151,10 +151,10 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::PushBack(const KeyType &key, const ValueType &v
                                           bool is_in_tombstones) {
   BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::PushBack(): try to insert a key which already exist");
   BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushBack(): try to insert a key to a full page");
-  BUSTUB_ASSERT(comparator(key, *(end(key_array_) - 1)) > 0,
+  BUSTUB_ASSERT(comparator(key, *(End(key_array_) - 1)) > 0,
                 "BPlusTreeLeafPage::PushFront(): try to push front a key <= key_array.back()");
 
-  InsertHelper(end(key_array_), key, value, comparator);
+  InsertHelper(End(key_array_), key, value, comparator);
   if (is_in_tombstones) {
     TombstonesPushBack(GetSize() - 1);
   }
@@ -192,10 +192,10 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
   warning: any index is index of value_array_, so when calculating with key_array_, we must add 1
   */
 
-  auto begin_iter = begin(key_array_);
-  auto end_iter = end(key_array_);
+  auto begin_iter = Begin(key_array_);
+  auto end_iter = End(key_array_);
   auto assume_end_iter = end_iter + 1;
-  auto insert_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+  auto insert_iter = std::upper_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
   auto split_begin_iter = begin_iter + std::distance(begin_iter, assume_end_iter) / 2;
   // result is begin with a invalid key
   std::vector<MappingType> result;
@@ -208,7 +208,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
     for (auto iter = split_begin_iter; iter != end_iter; ++iter) {
       result.emplace_back(*iter, *GetCorrespondValueIter(iter));
     }
-    SetSize(std::distance(begin(rid_array_), GetCorrespondValueIter(split_begin_iter - 1)));
+    SetSize(std::distance(Begin(rid_array_), GetCorrespondValueIter(split_begin_iter - 1)));
     InsertHelper(insert_iter, key, value, comparator);
   } else {
     // insert into second half
@@ -222,7 +222,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
     for (auto iter = insert_iter; iter != end_iter; ++iter) {
       result.emplace_back(*iter, *GetCorrespondValueIter(iter));
     }
-    SetSize(std::distance(begin(rid_array_), GetCorrespondValueIter(split_begin_iter)));
+    SetSize(std::distance(Begin(rid_array_), GetCorrespondValueIter(split_begin_iter)));
   }
 
   BUSTUB_ASSERT(!IsInsufficient(), "BPlusTreeLeafPage::Insert(): first half become insufficient after split");
@@ -249,10 +249,10 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(size_t index) {
     TombstonesInsert(index);
   } else {
     // tombstones not enabled
-    auto key_evict_iter = begin(key_array_) + index;
-    auto value_evict_iter = begin(rid_array_) + index;
-    std::copy(key_evict_iter + 1, end(key_array_), key_evict_iter);
-    std::copy(value_evict_iter + 1, end(rid_array_), value_evict_iter);
+    auto key_evict_iter = Begin(key_array_) + index;
+    auto value_evict_iter = Begin(rid_array_) + index;
+    std::copy(key_evict_iter + 1, End(key_array_), key_evict_iter);
+    std::copy(value_evict_iter + 1, End(rid_array_), value_evict_iter);
     ChangeSizeBy(-1);
   }
 }
@@ -263,8 +263,8 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator 
   BUSTUB_ASSERT(GetValue(key, comparator) != std::nullopt,
                 "BPlusTreeInternalPage::Remove(): try to remove a non-exist key");
 
-  auto key_iter = std::lower_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
-  auto key_index = std::distance(begin(key_array_), key_iter);
+  auto key_iter = std::lower_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
+  auto key_index = std::distance(Begin(key_array_), key_iter);
   Remove(key_index);
 }
 
@@ -272,7 +272,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::Contains(const KeyType &key, const KeyComparator &comparator) const -> bool {
   auto is_in_key_array =
-      std::binary_search(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+      std::binary_search(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
   if (!is_in_key_array) {
     return false;
   }
@@ -294,8 +294,8 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMinKv() -> std::pair<MappingType, bool> {
   result.second = ValueAt(index);
   bool is_in_tombstones = (*TombstonesBegin() == index);
   // remove kv
-  std::copy(begin(key_array_) + 1, end(key_array_), begin(key_array_));
-  std::copy(begin(rid_array_) + 1, end(rid_array_), begin(rid_array_));
+  std::copy(Begin(key_array_) + 1, End(key_array_), Begin(key_array_));
+  std::copy(Begin(rid_array_) + 1, End(rid_array_), Begin(rid_array_));
   ChangeSizeBy(-1);
   // decrease tombstones because i remove the min kv
   std::for_each(TombstonesBegin(), TombstonesEnd(), [](auto &index) { index = index - 1; });
@@ -303,11 +303,9 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMinKv() -> std::pair<MappingType, bool> {
     // kv in tombstones
     TombstonesPopFront();
     return {result, true};
-
-  } else {
-    // kv not in tombstones
-    return {result, false};
   }
+  // kv not in tombstones
+  return {result, false};
 }
 
 // assume page is healthy
@@ -317,7 +315,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMaxKv() -> std::pair<MappingType, bool> {
   BUSTUB_ASSERT(IsHealthy(), "BPlusTreeInternalPage::InsertHelper(): try to evict from a unhealthy page");
 
   MappingType result;
-  size_t index = std::distance(begin(key_array_), end(key_array_)) - 1;
+  size_t index = std::distance(Begin(key_array_), End(key_array_)) - 1;
   result.first = KeyAt(index);
   result.second = ValueAt(index);
   bool is_in_tombstones = (*(TombstonesEnd() - 1) == index);
@@ -329,11 +327,9 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMaxKv() -> std::pair<MappingType, bool> {
     // kv in tombstones
     TombstonesPopBack();
     return {result, true};
-
-  } else {
-    // kv not in tombstones
-    return {result, false};
   }
+  // kv not in tombstones
+  return {result, false};
 }
 
 // assume another is at right of this, in another words, all another's key are bigger than this
@@ -343,13 +339,13 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComparator &comparator) {
   BUSTUB_ASSERT(GetSize() + another.GetSize() >= GetMinSize(), "BPlusTreeInternalPage::Merge(): invalid after merge");
   if (GetSize() != 0 && another.GetSize() != 0) {
-    BUSTUB_ASSERT(comparator(*(cend(key_array_) - 1), *another.cbegin(another.key_array_)) < 0,
+    BUSTUB_ASSERT(comparator(*(Cend(key_array_) - 1), *another.Cbegin(another.key_array_)) < 0,
                   "BPlusTreeInternalPage::Merge(): unorder merge");
   }
 
-  auto key_iter = another.cbegin(another.key_array_);
-  auto key_end = another.cend(another.key_array_);
-  auto value_iter = another.cbegin(another.rid_array_);
+  auto key_iter = another.Cbegin(another.key_array_);
+  auto key_end = another.Cend(another.key_array_);
+  auto value_iter = another.Cbegin(another.rid_array_);
   auto tombstones_iter = another.TombstonesBegin();
 
   for (; key_iter != key_end; ++key_iter, ++value_iter) {
@@ -357,7 +353,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComp
     const auto &value = *value_iter;
     bool is_in_tombstones = false;
     if (tombstones_iter != another.TombstonesEnd() &&
-        *tombstones_iter == static_cast<size_t>(std::distance(another.cbegin(another.key_array_), key_iter))) {
+        *tombstones_iter == static_cast<size_t>(std::distance(another.Cbegin(another.key_array_), key_iter))) {
       // key in tombstones
       is_in_tombstones = true;
       ++tombstones_iter;
@@ -383,17 +379,17 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(KeyIterType key_iter, const KeyTyp
   BUSTUB_ASSERT(!Contains(key, comparator),
                 "BPlusTreeInternalPage::InsertHelper(): try to insert a key which already exist");
   BUSTUB_ASSERT(
-      std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator)) == key_iter,
+      std::upper_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator)) == key_iter,
       "BPlusTreeInternalPage::InsertHelper(): try to insert a key to a unordered place");
 
   auto value_iter = GetCorrespondValueIter(key_iter);
-  std::move_backward(key_iter, end(key_array_), end(key_array_) + 1);
+  std::move_backward(key_iter, End(key_array_), End(key_array_) + 1);
   *key_iter = key;
-  std::move_backward(value_iter, end(rid_array_), end(rid_array_) + 1);
+  std::move_backward(value_iter, End(rid_array_), End(rid_array_) + 1);
   *value_iter = value;
 
   // adjust tombstones
-  auto index = std::distance(begin(key_array_), key_iter);
+  auto index = std::distance(Begin(key_array_), key_iter);
   auto tombstones_iter = std::lower_bound(TombstonesBegin(), TombstonesEnd(), index);
   std::for_each(tombstones_iter, TombstonesEnd(), [](auto &index) { ++index; });
   ChangeSizeBy(1);
@@ -408,7 +404,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(const KeyType &key, const ValueTyp
   BUSTUB_ASSERT(!Contains(key, comparator),
                 "BPlusTreeLeafPage::InsertHelper(): try to insert a key which already exist");
 
-  auto key_iter = std::upper_bound(begin(key_array_), end(key_array_), key, ConvertToStdComparator(comparator));
+  auto key_iter = std::upper_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
   return InsertHelper(key_iter, key, value, comparator);
 }
 
@@ -422,10 +418,10 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictTombstones() -> size_t {
   BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::EvictTombstones(): try to evict a empty tombstones");
 
   auto evict_index = tombstones_[num_tombstones_ - 1];
-  auto key_evict_iter = begin(key_array_) + evict_index;
-  auto value_evict_iter = begin(rid_array_) + evict_index;
-  std::copy(key_evict_iter + 1, end(key_array_), key_evict_iter);
-  std::copy(value_evict_iter + 1, end(rid_array_), value_evict_iter);
+  auto key_evict_iter = Begin(key_array_) + evict_index;
+  auto value_evict_iter = Begin(rid_array_) + evict_index;
+  std::copy(key_evict_iter + 1, End(key_array_), key_evict_iter);
+  std::copy(value_evict_iter + 1, End(rid_array_), value_evict_iter);
   --num_tombstones_;
   ChangeSizeBy(-1);
   return evict_index;

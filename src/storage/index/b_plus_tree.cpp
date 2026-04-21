@@ -37,7 +37,7 @@
 namespace bustub {
 
 namespace b_plus_tree {
-std::mutex Debuger::lock_;
+std::mutex Debuger::latch;
 }  // namespace b_plus_tree
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
@@ -221,7 +221,9 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   if (optimistic_try_result == OptimisticTryResult::kSuccess) {
     // success
     return true;
-  } else if (optimistic_try_result == OptimisticTryResult::kKeyExist) {
+  }
+  if (optimistic_try_result == OptimisticTryResult::kKeyExist) {
+    // key exist
     return false;
   }
 
@@ -628,7 +630,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
 
     // delete merged page
-    while (bpm_->DeletePage(delete_page_id) == false) {
+    while (!bpm_->DeletePage(delete_page_id)) {
     }
   };
 
