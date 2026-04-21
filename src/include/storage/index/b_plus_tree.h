@@ -28,6 +28,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <queue>
 #include <shared_mutex>
@@ -46,32 +47,60 @@
 namespace bustub {
 
 namespace b_plus_tree {
-constexpr bool DEBUG_MODE = true;
+constexpr bool DEBUG_MODE = false;
 
 class Debuger {
  public:
-  Debuger(std::string_view function_name, std::function<void()> function)
+  Debuger(std::string_view function_name, std::function<std::string()> function)
       : function_name_(function_name), function_(std::move(function)) {
     if constexpr (DEBUG_MODE) {
-      std::cout << ">>> START " << function_name_ << " <<<" << std::endl;
-      if (function_) {
-        function_();
-      }
+      auto str = InvokeHelper();
+      std::scoped_lock<std::mutex> lock{lock_};
+      std::cout << ">>> START " << function_name_ << " <<<\n";
+      PrintThreadId();
+      std::cout << str << "\n";
     }
   }
 
   ~Debuger() {
     if constexpr (DEBUG_MODE) {
-      std::cout << "<<< END " << function_name_ << " >>>" << std::endl;
-      if (function_) {
-        function_();
-      }
+      auto str = InvokeHelper();
+      std::scoped_lock<std::mutex> lock{lock_};
+      std::cout << "<<< END " << function_name_ << " >>>\n";
+      PrintThreadId();
+      std::cout << str << "\n";
+    }
+  }
+
+  void Print(std::string_view str) {
+    if constexpr (DEBUG_MODE) {
+      std::scoped_lock<std::mutex> lock{lock_};
+      PrintThreadId();
+      std::cout << str;
+    }
+  }
+
+  void Invoke() {
+    if constexpr (DEBUG_MODE) {
+      auto str = InvokeHelper();
+      std::scoped_lock<std::mutex> lock{lock_};
+      PrintThreadId();
+      std::cout << str << "\n";
     }
   }
 
  private:
+  void PrintThreadId() { std::cout << std::this_thread::get_id() << "\n"; }
+  std::string InvokeHelper() {
+    if (function_) {
+      return function_();
+    }
+    return std::string{};
+  }
+
   std::string_view function_name_;
-  std::function<void()> function_;
+  std::function<std::string()> function_;
+  static std::mutex lock_;
 };
 }  // namespace b_plus_tree
 

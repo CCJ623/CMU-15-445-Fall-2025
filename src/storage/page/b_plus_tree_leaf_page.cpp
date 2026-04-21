@@ -296,6 +296,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMinKv() -> std::pair<MappingType, bool> {
   // remove kv
   std::copy(begin(key_array_) + 1, end(key_array_), begin(key_array_));
   std::copy(begin(rid_array_) + 1, end(rid_array_), begin(rid_array_));
+  ChangeSizeBy(-1);
   // decrease tombstones because i remove the min kv
   std::for_each(TombstonesBegin(), TombstonesEnd(), [](auto &index) { index = index - 1; });
   if (is_in_tombstones) {

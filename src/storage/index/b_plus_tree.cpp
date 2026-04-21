@@ -13,14 +13,19 @@
 #include "storage/index/b_plus_tree.h"
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <stack>
+#include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include "buffer/traced_buffer_pool_manager.h"
 #include "common/config.h"
 #include "common/macros.h"
 #include "common/rid.h"
+#include "fmt/base.h"
+#include "fmt/format.h"
 #include "storage/index/b_plus_tree_debug.h"
 #include "storage/index/index_iterator.h"
 #include "storage/page/b_plus_tree_header_page.h"
@@ -30,6 +35,10 @@
 #include "storage/page/page_guard.h"
 
 namespace bustub {
+
+namespace b_plus_tree {
+std::mutex Debuger::lock_;
+}  // namespace b_plus_tree
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 BPLUSTREE_TYPE::BPlusTree(std::string name, page_id_t header_page_id, BufferPoolManager *buffer_pool_manager,
@@ -354,12 +363,18 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key) {
+  b_plus_tree::Debuger debuger{
+      "Remove", [this, &key]() { return fmt::format("key[{}]\n{}\n", key.ToString(), DrawBPlusTree()); }};
+
   if (IsEmpty()) {
+    debuger.Print("Remove(): is empty\n");
     return;
   }
 
   // optimistic try to remove, return false if failed
-  auto optimistic_try = [this, &key]() -> bool {
+  auto optimistic_try = [this, &key, &debuger]() -> bool {
+    debuger.Print("Remove(): optimistic try\n");
+
     Context context;
     // read root page
     auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
@@ -397,6 +412,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>());
     if (!leaf_page.Contains(key, comparator_)) {
       // key not exist
+      debuger.Print(fmt::format("Remove()::optimistic_try(): key[{}] not exist\n", key.ToString()));
+
       return true;
     }
     // key exist
@@ -404,6 +421,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       // leaf is root, remove and return
       leaf_page.Remove(key, comparator_);
       if (!leaf_page.IsEmpty()) {
+        debuger.Print(fmt::format("Remove()::optimistic_try(): leaf is root and not empty, remove and return\n"));
+
         return true;
       }
       // root is empty
@@ -416,6 +435,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       if (context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_ == leaf_page_id &&
           bpm_->ReadPage(leaf_page_id).As<LeafPage>()->IsEmpty()) {
         // tree is not changed
+        debuger.Print(fmt::format("Remove(): root empty, delete root[{}]\n", leaf_page_id));
+
         bpm_->DeletePage(leaf_page_id);
         context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = INVALID_PAGE_ID;
       }
@@ -435,12 +456,18 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
 
   if (optimistic_try()) {
     // success
+    debuger.Print("Remove(): optimistic try success\n");
+
     return;
   }
+
+  debuger.Print("Remove(): optimistic try failed\n");
 
   // optimistic failed
   // leaf is not root
   // pessimistic way
+  debuger.Print("Remove(): pessimistic try\n");
+
   Context context;
   context.header_page_ = bpm_->WritePage(header_page_id_);
   context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
@@ -460,6 +487,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   auto leaf_page_id = context.write_set_.back().GetPageId();
   if (auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>()); !leaf_page.Contains(key, comparator_)) {
     // key not exist
+
+    debuger.Print(fmt::format("Remove(): key[{}] not exist\n", key.ToString()));
+
     return;
   }
 
@@ -476,13 +506,14 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   // if can't steal, then merge sibling and adjust upstream page
   // if merge happend, this function will remove a pair of KV in upstream page
   // user should check whether upstream page state after calling this function
-  auto steal_or_merge = [this, &context](auto &current_page, auto &upstream_page, size_t index) {
+  auto steal_or_merge = [this, &context, &debuger](auto &current_page, auto &upstream_page, size_t index) {
     using CurrentPageType = std::decay_t<decltype(current_page)>;
 
     auto [left_page_id, right_page_id] = upstream_page.GetSiblings(index);
 
     // find best matched page to steal
     WritePageGuard target_page_guard;
+    auto current_page_id = context.write_set_.back().GetPageId();
     bool is_target_left;
     if (left_page_id == INVALID_PAGE_ID) {
       // no left, steal from right
@@ -510,8 +541,13 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     auto &target_page = *(target_page_guard.AsMut<CurrentPageType>());
     if (target_page.IsHealthy()) {
       // healthy, no need to merge, steal and return
+      // we need to push up key to upstream
+      size_t push_up_index;
+      KeyType push_up_key;
       if (is_target_left) {
         // target at left
+        push_up_index = index;
+        push_up_key = upstream_page.KeyAt(upstream_page.GetSize() - 1);
         if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
           auto [kv, is_in_tombstones] = target_page.EvictMaxKv();
           current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
@@ -520,8 +556,13 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
           current_page.PushFront(kv.first, kv.second, comparator_);
         }
 
+        debuger.Print(fmt::format("Remove(): this[{}] steal from left[{}], push up key[{}], at index[{}]\n",
+                                  current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
+                                  push_up_index));
+
       } else {
         // target at right
+        push_up_index = index + 1;
         if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
           auto [kv, is_in_tombstones] = target_page.EvictMinKv();
           current_page.PushBack(kv.first, kv.second, comparator_, is_in_tombstones);
@@ -529,7 +570,13 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
           auto kv = target_page.EvictMinKv();
           current_page.PushBack(kv.first, kv.second, comparator_);
         }
+        push_up_key = target_page.KeyAt(1);
+
+        debuger.Print(fmt::format("Remove(): this[{}] steal from right[{}], push up key[{}], at index[{}]\n",
+                                  current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
+                                  push_up_index));
       }
+      upstream_page.SetKeyAt(push_up_index, push_up_key);
       return;
     }
 
@@ -537,6 +584,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     page_id_t delete_page_id;
     if (is_target_left) {
       // target page is at left side
+      debuger.Print(fmt::format("Remove(): left[{}] merge this[{}]\n", target_page_guard.GetPageId(), current_page_id));
+
       if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
         // leaf page, merge and remove key in upstream
         target_page.Merge(current_page, comparator_);
@@ -550,6 +599,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       context.write_set_.back() = std::move(target_page_guard);
     } else {
       // target page is at right side
+      debuger.Print(
+          fmt::format("Remove(): this[{}] merge right[{}]\n", current_page_id, target_page_guard.GetPageId()));
+
       if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
         // leaf page, merge and remove key in upstream
         current_page.Merge(target_page, comparator_);
@@ -609,6 +661,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   if (root_page.IsEmpty()) {
     // delete empty root page
     // assign new root page
+    debuger.Print(fmt::format("Remove(): root empty, new root[{}]\n", new_root_page_id));
+
     context.write_set_.back().Drop();
     context.write_set_.pop_back();
     bpm_->DeletePage(context.root_page_id_);
