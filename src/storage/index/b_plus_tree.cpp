@@ -270,10 +270,9 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     auto new_page_guard = bpm_->WritePage(new_page_id);
     auto &new_page = *(new_page_guard.AsMut<InternalPage>());
     new_page.Init(internal_max_size_);
-    new_page.SetSize(2);
-    new_page.SetKeyAt(1, key);
+    new_page.SetSize(1);
     new_page.SetValueAt(0, left);
-    new_page.SetValueAt(1, right);
+    new_page.PushBack(key, right, comparator_);
     context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_page_id;
     context.root_page_id_ = new_page_id;
     return std::move(new_page_guard);
@@ -588,7 +587,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
                                   current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
                                   push_up_index));
       }
-      upstream_page.SetKeyAt(push_up_index, push_up_key);
+      // push up key
+      upstream_page.SetKeyAt(push_up_index, push_up_key, comparator_);
       return;
     }
 

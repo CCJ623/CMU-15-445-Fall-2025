@@ -18,6 +18,7 @@
 #include "common/config.h"
 #include "common/exception.h"
 #include "common/macros.h"
+#include "storage/index/generic_key.h"
 #include "storage/page/b_plus_tree_internal_page.h"
 #include "storage/page/b_plus_tree_page.h"
 
@@ -80,10 +81,18 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::KeyAt(int index) const -> KeyType {
  * @param key The new value for key
  */
 INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetKeyAt(int index, const KeyType &key) {
-  BUSTUB_ASSERT(0 < index && index < GetSize(), "SetKeyAt(): index out of range");
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::SetKeyAt(int index, const KeyType &key, const KeyComparator &comparator) {
+  auto iter = begin(key_array_) + index - 1;
+  BUSTUB_ASSERT(begin(key_array_) <= iter && iter < end(key_array_),
+                "BPlusTreeInternalPage::SetKeyAt(): index out of range");
+  if (iter != begin(key_array_)) {
+    BUSTUB_ASSERT(comparator(*(iter - 1), key) < 0, "BPlusTreeInternalPage::SetKeyAt(): unordered");
+  }
+  if (iter != end(key_array_) - 1) {
+    BUSTUB_ASSERT(comparator(key, *(iter + 1)) < 0, "BPlusTreeInternalPage::SetKeyAt(): unordered");
+  }
 
-  key_array_[index] = key;
+  *iter = key;
 }
 
 /**
@@ -133,7 +142,13 @@ void B_PLUS_TREE_INTERNAL_PAGE_TYPE::PushFront(const KeyType &key, const ValueTy
   BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushFront(): try to insert a key to a full page");
   BUSTUB_ASSERT(comparator(key, FrontKey()) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
 
-  InsertHelper(begin(key_array_), key, value, comparator);
+  auto key_iter = begin(key_array_);
+  auto value_iter = GetCorrespondValueIter(key_iter) - 1;
+  std::move_backward(key_iter, end(key_array_), end(key_array_) + 1);
+  *key_iter = key;
+  std::move_backward(value_iter, end(page_id_array_), end(page_id_array_) + 1);
+  *value_iter = value;
+  ChangeSizeBy(1);
 }
 
 INDEX_TEMPLATE_ARGUMENTS
