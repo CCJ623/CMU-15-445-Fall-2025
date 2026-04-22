@@ -544,54 +544,80 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
 
     auto &target_page = *(target_page_guard.AsMut<CurrentPageType>());
-    if (target_page.IsHealthy()) {
-      // healthy, no need to merge, steal and return
-      // we need to push up key to upstream
-      size_t push_up_index;
-      KeyType push_up_key;
-      if (is_target_left) {
-        // target at left
-        push_up_index = index;
-        if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
-          // is leaf
+    if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+      // leaf page
+      // may steal a tomb key, must keep stealling until being to critical
+      // if can not be critical, then go down to merge
+      while (target_page.IsHealthy()) {
+        // we need to push up key to upstream
+        size_t push_up_index;
+        KeyType push_up_key;
+        if (is_target_left) {
+          // target at left
+          push_up_index = index;
           auto [kv, is_in_tombstones] = target_page.EvictMaxKv();
           current_page.PushFront(kv.first, kv.second, comparator_, is_in_tombstones);
           push_up_key = current_page.FrontKey();
+
+          debuger.Print(fmt::format("Remove(): this[{}] steal from left[{}], push up key[{}], at index[{}]\n",
+                                    current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
+                                    push_up_index));
         } else {
-          // is internal
-          // exchange key with upstream
-          auto kv = target_page.EvictMaxKv();
-          current_page.PushFront(upstream_page.KeyAt(push_up_index), kv.second, comparator_);
-          push_up_key = kv.first;
-        }
-
-        debuger.Print(fmt::format("Remove(): this[{}] steal from left[{}], push up key[{}], at index[{}]\n",
-                                  current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
-                                  push_up_index));
-
-      } else {
-        // target at right
-        push_up_index = index + 1;
-        if constexpr (std::is_same_v<CurrentPageType, LeafPage>) {
+          // target at right
+          push_up_index = index + 1;
           // is leaf
           auto [kv, is_in_tombstones] = target_page.EvictMinKv();
           current_page.PushBack(kv.first, kv.second, comparator_, is_in_tombstones);
           push_up_key = target_page.FrontKey();
-        } else {
-          // is internal
+
+          debuger.Print(fmt::format("Remove(): this[{}] steal from right[{}], push up key[{}], at index[{}]\n",
+                                    current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
+                                    push_up_index));
+        }
+        if (current_page.IsInsufficient()) {
+          // still insufficient, keep going
+          continue;
+        }
+        // success
+        // push up key and return
+        upstream_page.SetKeyAt(push_up_index, push_up_key, comparator_);
+        return;
+      }
+    } else {
+      // internal page
+      if (target_page.IsHealthy()) {
+        // healthy, no need to merge, steal and return
+        // we need to push up key to upstream
+        size_t push_up_index;
+        KeyType push_up_key;
+        if (is_target_left) {
+          // target at left
+          push_up_index = index;
+          auto kv = target_page.EvictMaxKv();
           // exchange key with upstream
+          current_page.PushFront(upstream_page.KeyAt(push_up_index), kv.second, comparator_);
+          push_up_key = kv.first;
+
+          debuger.Print(fmt::format("Remove(): this[{}] steal from left[{}], push up key[{}], at index[{}]\n",
+                                    current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
+                                    push_up_index));
+
+        } else {
+          // target at right
+          push_up_index = index + 1;
           auto kv = target_page.EvictMinKv();
+          // exchange key with upstream
           current_page.PushBack(upstream_page.KeyAt(push_up_index), kv.second, comparator_);
           push_up_key = kv.first;
-        }
 
-        debuger.Print(fmt::format("Remove(): this[{}] steal from right[{}], push up key[{}], at index[{}]\n",
-                                  current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
-                                  push_up_index));
+          debuger.Print(fmt::format("Remove(): this[{}] steal from right[{}], push up key[{}], at index[{}]\n",
+                                    current_page_id, target_page_guard.GetPageId(), push_up_key.ToString(),
+                                    push_up_index));
+        }
+        // exchange key with upstream
+        upstream_page.SetKeyAt(push_up_index, push_up_key, comparator_);
+        return;
       }
-      // push up key
-      upstream_page.SetKeyAt(push_up_index, push_up_key, comparator_);
-      return;
     }
 
     // not healthy, need to merge

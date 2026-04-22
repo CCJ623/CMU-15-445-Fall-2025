@@ -140,6 +140,10 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::PushFront(const KeyType &key, const ValueType &
   BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushFront(): try to insert a key to a full page");
   BUSTUB_ASSERT(comparator(key, KeyAt(0)) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
 
+  if (is_in_tombstones && IsTombstonesFull()) {
+    // no place for it
+    return;
+  }
   InsertHelper(Begin(key_array_), key, value, comparator);
   if (is_in_tombstones) {
     TombstonesPushBack(0);
@@ -154,6 +158,10 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::PushBack(const KeyType &key, const ValueType &v
   BUSTUB_ASSERT(comparator(key, *(End(key_array_) - 1)) > 0,
                 "BPlusTreeLeafPage::PushFront(): try to push front a key <= key_array.back()");
 
+  if (is_in_tombstones && IsTombstonesFull()) {
+    // no place for it
+    return;
+  }
   InsertHelper(End(key_array_), key, value, comparator);
   if (is_in_tombstones) {
     TombstonesPushBack(GetSize() - 1);
