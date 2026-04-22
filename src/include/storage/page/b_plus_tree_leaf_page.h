@@ -101,6 +101,9 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   void Merge(BPlusTreeLeafPage &another, const KeyComparator &comparator);
   // return true if leaf is really full
   auto IsLeafFull() const -> bool { return IsFull() && num_tombstones_ == 0; }
+  auto TombstonesContains(size_t index) const -> bool {
+    return std::find(TombstonesBegin(), TombstonesEnd(), index) != TombstonesEnd();
+  }
 
   /**
    * @brief for test only return a string representing all keys in
@@ -141,7 +144,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   page_id_t next_page_id_;
   size_t num_tombstones_;
   // Fixed-size tombstone buffer (indexes into key_array_ / rid_array_).
-  // ordered by indexes
+  // FIFO
   size_t tombstones_[LEAF_PAGE_TOMB_CNT];
   // Array members for page data.
   KeyType key_array_[LEAF_PAGE_SLOT_CNT];
@@ -153,38 +156,16 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto EvictTombstones() -> size_t;
   auto IsTombstonesFull() const -> bool { return num_tombstones_ == LEAF_PAGE_TOMB_CNT; }
   auto IsTombstonesEmpty() const -> bool { return num_tombstones_ == 0; }
-  auto TombstonesContains(size_t index) const -> bool {
-    return std::binary_search(TombstonesBegin(), TombstonesEnd(), index);
-  }
-  void TombstonesInsert(size_t index) {
-    BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesInsert(): tombstones is full");
-    auto insert_iter = std::upper_bound(TombstonesBegin(), TombstonesEnd(), index);
-    std::move_backward(insert_iter, TombstonesEnd(), TombstonesEnd() + 1);
-    *insert_iter = index;
-    ++num_tombstones_;
-  }
   void TombstonesRemove(size_t index) {
     BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesInsert(): tombstones is full");
-    BUSTUB_ASSERT(std::binary_search(TombstonesBegin(), TombstonesEnd(), index),
-                  "BPlusTreeLeafPage::TombstonesInsert(): index not in tombstones");
-    auto remove_iter = std::lower_bound(TombstonesBegin(), TombstonesEnd(), index);
+    BUSTUB_ASSERT(TombstonesContains(index), "BPlusTreeLeafPage::TombstonesInsert(): index not in tombstones");
+    auto remove_iter = std::find(TombstonesBegin(), TombstonesEnd(), index);
     std::copy(remove_iter + 1, TombstonesEnd(), remove_iter);
     --num_tombstones_;
   }
-  void TombstonesPushFront(size_t index) {
-    BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesPushFront(): tombstones is full");
-    BUSTUB_ASSERT(std::upper_bound(TombstonesBegin(), TombstonesEnd(), index) == TombstonesBegin(),
-                  "BPlusTreeLeafPage::TombstonesPushFront(): index in unordered");
-
-    std::move_backward(TombstonesBegin(), TombstonesEnd(), TombstonesEnd() + 1);
-    tombstones_[0] = index;
-    ++num_tombstones_;
-  }
   void TombstonesPushBack(size_t index) {
     BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesPushBack(): tombstones is full");
-    BUSTUB_ASSERT(std::upper_bound(TombstonesBegin(), TombstonesEnd(), index) == TombstonesEnd(),
-                  "BPlusTreeLeafPage::TombstonesPushBack(): index in unordered");
-    tombstones_[num_tombstones_] = index;
+    *TombstonesEnd() = index;
     ++num_tombstones_;
   }
   void TombstonesPopFront() {
@@ -194,7 +175,8 @@ class BPlusTreeLeafPage : public BPlusTreePage {
     --num_tombstones_;
   }
   void TombstonesPopBack() {
-    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesPushBack(): tombstones is empty");
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesPopFront(): tombstones is empty");
+
     --num_tombstones_;
   }
 

@@ -707,8 +707,7 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
   }
   const auto &page = *page_guard.As<LeafPage>();
   INDEXITERATOR_TYPE iter(bpm_.get(), page_guard.GetPageId(), 0, comparator_);
-  auto tombstones = page.GetTombstones();
-  if (!tombstones.empty() && comparator_(tombstones.front(), page.KeyAt(0)) == 0) {
+  if (page.TombstonesContains(0)) {
     // first key is in tombstones
     ++iter;
   }

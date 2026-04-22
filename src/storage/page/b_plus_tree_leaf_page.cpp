@@ -73,7 +73,7 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetTombstones() const -> std::vector<KeyType> {
   std::vector<KeyType> result;
   result.reserve(num_tombstones_);
-  std::transform(tombstones_, tombstones_ + num_tombstones_, std::back_inserter(result),
+  std::transform(TombstonesBegin(), TombstonesEnd(), std::back_inserter(result),
                  [this](size_t index) { return key_array_[index]; });
   return result;
 }
@@ -142,7 +142,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::PushFront(const KeyType &key, const ValueType &
 
   InsertHelper(Begin(key_array_), key, value, comparator);
   if (is_in_tombstones) {
-    TombstonesPushFront(0);
+    TombstonesPushBack(0);
   }
 }
 
@@ -171,7 +171,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
 
   {
     auto index = FindLowKey(key, comparator);
-    if (comparator(KeyAt(index), key) == 0 && std::binary_search(TombstonesBegin(), TombstonesEnd(), index)) {
+    if (comparator(KeyAt(index), key) == 0 && TombstonesContains(index)) {
       // key in tombstones, revive
       rid_array_[index] = value;
       TombstonesRemove(index);
@@ -249,14 +249,14 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(size_t index) {
 
   if (!IsTombstonesFull()) {
     // tombstones not full, add to it
-    TombstonesInsert(index);
+    TombstonesPushBack(index);
   } else if (!IsTombstonesEmpty()) {
     // tombstones full, evict
     auto evict_index = EvictTombstones();
     if (evict_index < static_cast<size_t>(index)) {
       --index;
     }
-    TombstonesInsert(index);
+    TombstonesPushBack(index);
   } else {
     // tombstones not enabled
     auto key_evict_iter = Begin(key_array_) + index;
@@ -355,19 +355,13 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComp
 
   auto key_iter = another.Cbegin(another.key_array_);
   auto key_end = another.Cend(another.key_array_);
-  auto value_iter = another.Cbegin(another.rid_array_);
-  auto tombstones_iter = another.TombstonesBegin();
 
-  for (; key_iter != key_end; ++key_iter, ++value_iter) {
+  for (; key_iter != key_end; ++key_iter) {
+    auto value_iter = another.GetCorrespondValueIter(key_iter);
     const auto &key = *key_iter;
     const auto &value = *value_iter;
-    bool is_in_tombstones = false;
-    if (tombstones_iter != another.TombstonesEnd() &&
-        *tombstones_iter == static_cast<size_t>(std::distance(another.Cbegin(another.key_array_), key_iter))) {
-      // key in tombstones
-      is_in_tombstones = true;
-      ++tombstones_iter;
-    }
+    auto index = std::distance(another.Cbegin(another.key_array_), key_iter);
+    bool is_in_tombstones = another.TombstonesContains(index);
     if (is_in_tombstones && IsTombstonesFull()) {
       // no place for this KV
       continue;
@@ -399,9 +393,12 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(KeyIterType key_iter, const KeyTyp
   *value_iter = value;
 
   // adjust tombstones
-  auto index = std::distance(Begin(key_array_), key_iter);
-  auto tombstones_iter = std::lower_bound(TombstonesBegin(), TombstonesEnd(), index);
-  std::for_each(tombstones_iter, TombstonesEnd(), [](auto &index) { ++index; });
+  std::for_each(TombstonesBegin(), TombstonesEnd(),
+                [insert_index = static_cast<size_t>(std::distance(Begin(key_array_), key_iter))](auto &index) {
+                  if (index >= insert_index) {
+                    ++index;
+                  }
+                });
   ChangeSizeBy(1);
 }
 
@@ -419,7 +416,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(const KeyType &key, const ValueTyp
 }
 
 // key/value may move after eviction
-// always evict the biggest index, all elements in front of it will not be affected
+// all elements in front of evict index will not be affected
 // all elements behind it will move forward
 // return evicted index
 // user must reacquire index based on return index
@@ -427,12 +424,18 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictTombstones() -> size_t {
   BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::EvictTombstones(): try to evict a empty tombstones");
 
-  auto evict_index = tombstones_[num_tombstones_ - 1];
+  auto evict_index = *TombstonesBegin();
   auto key_evict_iter = Begin(key_array_) + evict_index;
-  auto value_evict_iter = Begin(rid_array_) + evict_index;
+  auto value_evict_iter = GetCorrespondValueIter(key_evict_iter);
   std::copy(key_evict_iter + 1, End(key_array_), key_evict_iter);
   std::copy(value_evict_iter + 1, End(rid_array_), value_evict_iter);
-  --num_tombstones_;
+  TombstonesPopFront();
+  // adjust tombstones
+  std::for_each(TombstonesBegin(), TombstonesEnd(), [evict_index](auto &index) {
+    if (index >= evict_index) {
+      --index;
+    }
+  });
   ChangeSizeBy(-1);
   return evict_index;
 }
