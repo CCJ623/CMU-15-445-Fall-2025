@@ -328,7 +328,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMaxKv() -> std::pair<MappingType, bool> {
   size_t index = GetSize() - 1;
   result.first = KeyAt(index);
   result.second = ValueAt(index);
-  bool is_in_tombstones = (*(TombstonesEnd() - 1) == index);
+  bool is_in_tombstones = TombstonesContains(index);
   // remove kv
   ChangeSizeBy(-1);
 
@@ -354,8 +354,11 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComp
   // PushBack will handle EvictTombstones() on 'this' if the tombstone buffer gets full.
   for (auto key_iter = another.Begin(another.key_array_); key_iter != another.End(another.key_array_); ++key_iter) {
     auto value_iter = another.GetCorrespondValueIter(key_iter);
-    bool is_tomb = another.TombstonesContains(*key_iter, comparator);
-    PushBack(*key_iter, *value_iter, comparator, is_tomb);
+    PushBack(*key_iter, *value_iter, comparator, false);
+  }
+  auto another_tombstones = another.GetTombstones();
+  for (const auto &tomb_key : another_tombstones) {
+    Remove(tomb_key, comparator);
   }
 
   SetNextPageId(another.GetNextPageId());
