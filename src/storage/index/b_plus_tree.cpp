@@ -202,13 +202,13 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
 
     // leaf_page_guard is ready here
 
-    if (auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>()); leaf_page.Contains(key, comparator_)) {
+    if (auto &leaf_page = *(leaf_page_guard.As<LeafPage>()); leaf_page.Contains(key, comparator_)) {
       // key already exist
       return OptimisticTryResult::kKeyExist;
     }
-    if (auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>()); !leaf_page.IsLeafFull()) {
+    if (auto &leaf_page = *(leaf_page_guard.As<LeafPage>()); !leaf_page.IsLeafFull()) {
       // leaf not full, no need to split
-      leaf_page.Insert(key, value, comparator_);
+      leaf_page_guard.AsMut<LeafPage>()->Insert(key, value, comparator_);
       return OptimisticTryResult::kSuccess;
     }
 
@@ -233,15 +233,18 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   context.header_page_ = bpm_->WritePage(header_page_id_);
   context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
   context.write_set_.push_back(bpm_->WritePage(context.root_page_id_));
+  if (context.root_page_id_ == INVALID_PAGE_ID) {
+    return false;
+  }
 
   // acquire write latches all way down to leaf
-  for (auto internal_page = context.write_set_.back().AsMut<InternalPage>(); !internal_page->IsLeafPage();
-       internal_page = context.write_set_.back().AsMut<InternalPage>()) {
+  for (auto internal_page = context.write_set_.back().As<InternalPage>(); !internal_page->IsLeafPage();
+       internal_page = context.write_set_.back().As<InternalPage>()) {
     context.write_set_.push_back(bpm_->WritePage(internal_page->GetValue(key, comparator_)));
   }
 
   auto leaf_page_id = context.write_set_.back().GetPageId();
-  if (auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>()); leaf_page.Contains(key, comparator_)) {
+  if (auto &leaf_page = *(context.write_set_.back().As<LeafPage>()); leaf_page.Contains(key, comparator_)) {
     // key already exist
     return false;
   }
@@ -385,6 +388,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
     WritePageGuard leaf_page_guard;
     context.root_page_id_ = read_header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+    if (context.root_page_id_ == INVALID_PAGE_ID) {
+      return false;
+    }
     if (auto root_page_guard = bpm_->ReadPage(context.root_page_id_);
         root_page_guard.As<InternalPage>()->IsLeafPage()) {
       // root is leaf
@@ -414,7 +420,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
 
     // leaf_page_guard is ready here
-    auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>());
+    auto &leaf_page = *(leaf_page_guard.As<LeafPage>());
     if (!leaf_page.Contains(key, comparator_)) {
       // key not exist
       debuger.Print(fmt::format("Remove()::optimistic_try(): key[{}] not exist\n", key.ToString()));
@@ -424,7 +430,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     // key exist
     if (leaf_page_guard.GetPageId() == context.root_page_id_) {
       // leaf is root, remove and return
-      leaf_page.Remove(key, comparator_);
+      leaf_page_guard.AsMut<LeafPage>()->Remove(key, comparator_);
       if (!leaf_page.IsEmpty()) {
         debuger.Print(fmt::format("Remove()::optimistic_try(): leaf is root and not empty, remove and return\n"));
 
@@ -450,7 +456,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     // leaf is not root
     if (leaf_page.IsHealthy()) {
       // leaf is healthy, no need to merge
-      leaf_page.Remove(key, comparator_);
+      leaf_page_guard.AsMut<LeafPage>()->Remove(key, comparator_);
       return true;
     }
 
@@ -476,13 +482,16 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   Context context;
   context.header_page_ = bpm_->WritePage(header_page_id_);
   context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
+  if (context.root_page_id_ == INVALID_PAGE_ID) {
+    return;
+  }
   context.write_set_.push_back(bpm_->WritePage(context.root_page_id_));
 
   // stores value index all way down to leaf
   std::stack<size_t> value_index_stack;
   // acquire write latches all way down to leaf
-  for (auto internal_page = context.write_set_.back().AsMut<InternalPage>(); !internal_page->IsLeafPage();
-       internal_page = context.write_set_.back().AsMut<InternalPage>()) {
+  for (auto internal_page = context.write_set_.back().As<InternalPage>(); !internal_page->IsLeafPage();
+       internal_page = context.write_set_.back().As<InternalPage>()) {
     auto index = internal_page->GetValueIndex(key, comparator_);
     value_index_stack.push(index);
     auto page_id = internal_page->ValueAt(index);
@@ -490,7 +499,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   }
 
   auto leaf_page_id = context.write_set_.back().GetPageId();
-  if (auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>()); !leaf_page.Contains(key, comparator_)) {
+  if (auto &leaf_page = *(context.write_set_.back().As<LeafPage>()); !leaf_page.Contains(key, comparator_)) {
     // key not exist
 
     debuger.Print(fmt::format("Remove(): key[{}] not exist\n", key.ToString()));
