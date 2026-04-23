@@ -104,6 +104,12 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto TombstonesContains(size_t index) const -> bool {
     return std::find(TombstonesBegin(), TombstonesEnd(), index) != TombstonesEnd();
   }
+  auto TombstonesContains(const KeyType &key, const KeyComparator &comparator) const -> bool {
+    BUSTUB_ASSERT(comparator(key, KeyAt(FindLowKey(key, comparator))) == 0,
+                  "BPlusTreeInternalPage::TombstonesContains(): invalid key");
+
+    return TombstonesContains(FindLowKey(key, comparator));
+  }
 
   /**
    * @brief for test only return a string representing all keys in
