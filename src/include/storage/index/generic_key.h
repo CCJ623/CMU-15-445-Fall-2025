@@ -109,5 +109,4 @@ class GenericComparator {
  private:
   Schema *key_schema_;
 };
-
 }  // namespace bustub

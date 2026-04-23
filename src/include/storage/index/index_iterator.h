@@ -16,10 +16,12 @@
  */
 #pragma once
 #include <utility>
+#include "buffer/buffer_pool_manager.h"
 #include "buffer/traced_buffer_pool_manager.h"
 #include "common/config.h"
 #include "common/macros.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/page_guard.h"
 
 namespace bustub {
 
@@ -28,9 +30,12 @@ namespace bustub {
 
 FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
 class IndexIterator {
+  using LeafPage = BPlusTreeLeafPage<KeyType, ValueType, KeyComparator, NumTombs>;
+
  public:
   // you may define your own constructor based on your member variables
-  IndexIterator();
+  IndexIterator(TracedBufferPoolManager *bpm, page_id_t page_id, size_t offset, KeyComparator comparator);
+  IndexIterator(IndexIterator &&another) noexcept = default;
   ~IndexIterator();  // NOLINT
 
   auto IsEnd() -> bool;
@@ -39,12 +44,23 @@ class IndexIterator {
 
   auto operator++() -> IndexIterator &;
 
-  auto operator==(const IndexIterator &itr) const -> bool { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+  auto operator==(const IndexIterator &itr) const -> bool {
+    return bpm_ == itr.bpm_ && page_id_ == itr.page_id_ && offset_ == itr.offset_;
+  }
 
-  auto operator!=(const IndexIterator &itr) const -> bool { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+  auto operator!=(const IndexIterator &itr) const -> bool { return !(*this == itr); }
 
  private:
   // add your own private member variables here
+  TracedBufferPoolManager *bpm_;
+  page_id_t page_id_;
+  ReadPageGuard guard_;
+  size_t offset_;
+  KeyComparator comparator_;
+
+  auto ConvertToStdComparator(const KeyComparator &comparator) {
+    return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
+  }
 };
 
 }  // namespace bustub

@@ -12,10 +12,15 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "common/macros.h"
 #include "storage/page/b_plus_tree_page.h"
 
 namespace bustub {
@@ -60,19 +65,51 @@ namespace bustub {
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
 class BPlusTreeLeafPage : public BPlusTreePage {
+  using KeyIterType = KeyType *;
+  using ConstKeyIterType = const std::remove_pointer_t<KeyIterType> *;
+  using ValueIterType = ValueType *;
+  using ConstValueIterType = const std::remove_pointer_t<ValueIterType> *;
+
  public:
   // Delete all constructor / destructor to ensure memory safety
   BPlusTreeLeafPage() = delete;
   BPlusTreeLeafPage(const BPlusTreeLeafPage &other) = delete;
 
   void Init(int max_size = LEAF_PAGE_SLOT_CNT);
+  void Init(int max_size, const std::vector<MappingType> &kvs);
 
   auto GetTombstones() const -> std::vector<KeyType>;
 
   // Helper methods
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
-  auto KeyAt(int index) const -> KeyType;
+  auto KeyAt(int index) const -> const KeyType &;
+  auto BackKey() const -> const KeyType & { return *End(key_array_); }
+  auto FrontKey() const -> const KeyType & { return *Begin(key_array_); }
+  auto ValueAt(int index) const -> const ValueType &;
+  auto FindLowKey(const KeyType &key, const KeyComparator &comparator) const -> size_t;
+  auto GetValue(const KeyType &key, const KeyComparator &comparator) const -> std::optional<ValueType>;
+  void PushFront(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool is_in_tombstones);
+  void PushBack(const KeyType &key, const ValueType &value, const KeyComparator &comparator, bool is_in_tombstones);
+  auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
+      -> std::optional<std::vector<MappingType>>;
+  void Remove(size_t index);
+  void Remove(const KeyType &key, const KeyComparator &comparator);
+  auto Contains(const KeyType &key, const KeyComparator &comparator) const -> bool;
+  auto EvictMinKv() -> std::pair<MappingType, bool>;
+  auto EvictMaxKv() -> std::pair<MappingType, bool>;
+  void Merge(BPlusTreeLeafPage &another, const KeyComparator &comparator);
+  // return true if leaf is really full
+  auto IsLeafFull() const -> bool { return IsFull() && num_tombstones_ == 0; }
+  auto TombstonesContains(size_t index) const -> bool {
+    return std::find(TombstonesBegin(), TombstonesEnd(), index) != TombstonesEnd();
+  }
+  auto TombstonesContains(const KeyType &key, const KeyComparator &comparator) const -> bool {
+    BUSTUB_ASSERT(comparator(key, KeyAt(FindLowKey(key, comparator))) == 0,
+                  "BPlusTreeInternalPage::TombstonesContains(): invalid key");
+
+    return TombstonesContains(FindLowKey(key, comparator));
+  }
 
   /**
    * @brief for test only return a string representing all keys in
@@ -113,11 +150,78 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   page_id_t next_page_id_;
   size_t num_tombstones_;
   // Fixed-size tombstone buffer (indexes into key_array_ / rid_array_).
+  // FIFO
   size_t tombstones_[LEAF_PAGE_TOMB_CNT];
   // Array members for page data.
   KeyType key_array_[LEAF_PAGE_SLOT_CNT];
   ValueType rid_array_[LEAF_PAGE_SLOT_CNT];
   // (Spring 2025) Feel free to add more fields and helper functions below if needed
+
+  void InsertHelper(KeyIterType key_iter, const KeyType &key, const ValueType &value, const KeyComparator &comparator);
+  void InsertHelper(const KeyType &key, const ValueType &value, const KeyComparator &comparator);
+  auto EvictTombstones() -> size_t;
+  auto IsTombstonesFull() const -> bool { return num_tombstones_ == LEAF_PAGE_TOMB_CNT; }
+  auto IsTombstonesEmpty() const -> bool { return num_tombstones_ == 0; }
+  void TombstonesRemove(size_t index) {
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesInsert(): tombstones is full");
+    BUSTUB_ASSERT(TombstonesContains(index), "BPlusTreeLeafPage::TombstonesInsert(): index not in tombstones");
+    auto remove_iter = std::find(TombstonesBegin(), TombstonesEnd(), index);
+    std::copy(remove_iter + 1, TombstonesEnd(), remove_iter);
+    --num_tombstones_;
+  }
+  void TombstonesPushBack(size_t index) {
+    BUSTUB_ASSERT(!IsTombstonesFull(), "BPlusTreeLeafPage::TombstonesPushBack(): tombstones is full");
+    *TombstonesEnd() = index;
+    ++num_tombstones_;
+  }
+  void TombstonesPopFront() {
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesPopFront(): tombstones is empty");
+
+    std::copy(TombstonesBegin() + 1, TombstonesEnd(), TombstonesBegin());
+    --num_tombstones_;
+  }
+  void TombstonesPopBack() {
+    BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::TombstonesPopFront(): tombstones is empty");
+
+    --num_tombstones_;
+  }
+
+  auto ConvertToStdComparator(const KeyComparator &comparator) const {
+    return [&comparator](const KeyType &lhs, const KeyType &rhs) { return comparator(lhs, rhs) < 0; };
+  }
+
+  template <typename T, std::size_t N>
+  auto Begin(T (&array)[N]) const -> T * {
+    return std::begin(array);
+  }
+
+  template <typename T, std::size_t N>
+  auto Cbegin(T (&array)[N]) const -> const T * {
+    return Begin(array);
+  }
+
+  template <typename T, std::size_t N>
+  auto End(T (&array)[N]) const -> T * {
+    return std::begin(array) + GetSize();
+  }
+
+  template <typename T, std::size_t N>
+  auto Cend(T (&array)[N]) const -> const T * {
+    return End(array);
+  }
+
+  auto TombstonesBegin() -> size_t * { return tombstones_; }
+  auto TombstonesBegin() const -> const size_t * { return tombstones_; }
+  auto TombstonesEnd() -> size_t * { return tombstones_ + num_tombstones_; }
+  auto TombstonesEnd() const -> const size_t * { return tombstones_ + num_tombstones_; }
+
+  auto GetCorrespondValueIter(ConstKeyIterType key_iter) const -> ConstValueIterType {
+    return Cbegin(rid_array_) + std::distance(Cbegin(key_array_), (key_iter));
+  }
+
+  auto GetCorrespondValueIter(KeyIterType key_iter) -> ValueIterType {
+    return Begin(rid_array_) + std::distance(Begin(key_array_), (key_iter));
+  }
 };
 
 }  // namespace bustub

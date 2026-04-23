@@ -10,11 +10,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <sstream>
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <optional>
+#include <vector>
 
+#include "common/config.h"
 #include "common/exception.h"
+#include "common/macros.h"
 #include "common/rid.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/b_plus_tree_page.h"
+#include "type/value.h"
 
 namespace bustub {
 
@@ -32,7 +40,30 @@ namespace bustub {
  * @param max_size Max size of the leaf node
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) {
+  BUSTUB_ASSERT(0 < max_size && static_cast<size_t>(max_size) <= LEAF_PAGE_SLOT_CNT,
+                "BPlusTreeInternalPage::Init(): max_size out of range");
+
+  SetSize(0);
+  SetMaxSize(max_size);
+  SetPageType(IndexPageType::LEAF_PAGE);
+  next_page_id_ = INVALID_PAGE_ID;
+  num_tombstones_ = 0;
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size, const std::vector<MappingType> &kvs) {
+  Init(max_size);
+
+  BUSTUB_ASSERT(0 <= kvs.size() && kvs.size() <= static_cast<size_t>(GetMaxSize()),
+                "BPlusTreeInternalPage::Init(): kvs.size() out of range");
+
+  SetSize(kvs.size());
+  for (size_t index = 0; index != kvs.size(); ++index) {
+    key_array_[index] = kvs[index].first;
+    rid_array_[index] = kvs[index].second;
+  }
+}
 
 /**
  * @brief Helper function for fetching tombstones of a page.
@@ -40,26 +71,366 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) { UNIMPLEMENTED("TODO(P2): A
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetTombstones() const -> std::vector<KeyType> {
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
+  std::vector<KeyType> result;
+  result.reserve(num_tombstones_);
+  std::transform(TombstonesBegin(), TombstonesEnd(), std::back_inserter(result),
+                 [this](size_t index) { return key_array_[index]; });
+  return result;
 }
 
 /**
  * Helper methods to set/get next page id
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetNextPageId() const -> page_id_t { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetNextPageId() const -> page_id_t { return next_page_id_; }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-void B_PLUS_TREE_LEAF_PAGE_TYPE::SetNextPageId(page_id_t next_page_id) {
-  UNIMPLEMENTED("TODO(P2): Add implementation.");
-}
+void B_PLUS_TREE_LEAF_PAGE_TYPE::SetNextPageId(page_id_t next_page_id) { next_page_id_ = next_page_id; }
 
 /*
  * Helper method to find and return the key associated with input "index" (a.k.a
  * array offset)
  */
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto B_PLUS_TREE_LEAF_PAGE_TYPE::KeyAt(int index) const -> KeyType { UNIMPLEMENTED("TODO(P2): Add implementation."); }
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::KeyAt(int index) const -> const KeyType & {
+  BUSTUB_ASSERT(0 <= index && index <= GetSize(), "KeyAt(): index out of range");
+  return key_array_[index];
+}
+
+/**
+ * @brief Helper method to get the value associated with input "index"(a.k.a array
+ * offset)
+ *
+ * @param index The index of the value to get.
+ * @return Value at index
+ */
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::ValueAt(int index) const -> const ValueType & {
+  BUSTUB_ASSERT(0 <= index && index < GetSize(), "BPlusTreeLeafPage::ValueAt(): index out of range");
+
+  return rid_array_[index];
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::FindLowKey(const KeyType &key, const KeyComparator &comparator) const -> size_t {
+  auto key_iter = std::lower_bound(Cbegin(key_array_), Cend(key_array_), key, ConvertToStdComparator(comparator));
+  return std::distance(Cbegin(key_array_), key_iter);
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetValue(const KeyType &key, const KeyComparator &comparator) const
+    -> std::optional<ValueType> {
+  auto key_iter = std::lower_bound(Cbegin(key_array_), Cend(key_array_), key, ConvertToStdComparator(comparator));
+  if (key_iter == Cend(key_array_) || comparator(key, *key_iter) != 0) {
+    // key not exist
+    return std::nullopt;
+  }
+  // key exist
+  auto index = std::distance(Cbegin(key_array_), key_iter);
+  if (TombstonesContains(index)) {
+    return std::nullopt;
+  }
+  return ValueAt(index);
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::PushFront(const KeyType &key, const ValueType &value, const KeyComparator &comparator,
+                                           bool is_in_tombstones) {
+  BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::PushFront(): try to insert a key which already exist");
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushFront(): try to insert a key to a full page");
+  BUSTUB_ASSERT(comparator(key, KeyAt(0)) < 0, "BPlusTreeLeafPage::PushFront(): try to push front a key >= key[0]");
+
+  if (is_in_tombstones && IsTombstonesFull()) {
+    // if target is full, we must process the oldest first (this page's oldest)
+    EvictTombstones();
+  }
+  InsertHelper(Begin(key_array_), key, value, comparator);
+  if (is_in_tombstones) {
+    TombstonesPushBack(0);
+  }
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::PushBack(const KeyType &key, const ValueType &value, const KeyComparator &comparator,
+                                          bool is_in_tombstones) {
+  BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::PushBack(): try to insert a key which already exist");
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::PushBack(): try to insert a key to a full page");
+  BUSTUB_ASSERT(comparator(key, *(End(key_array_) - 1)) > 0,
+                "BPlusTreeLeafPage::PushFront(): try to push front a key <= key_array.back()");
+
+  if (is_in_tombstones && IsTombstonesFull()) {
+    // if target is full, we must process the oldest first (this page's oldest)
+    EvictTombstones();
+  }
+  InsertHelper(End(key_array_), key, value, comparator);
+  if (is_in_tombstones) {
+    TombstonesPushBack(GetSize() - 1);
+  }
+}
+
+// assume key is not presented
+// insert KV
+// split if full and tomb is empty
+// return second half if split, nullopt if not split
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator)
+    -> std::optional<std::vector<MappingType>> {
+  BUSTUB_ASSERT(!Contains(key, comparator), "BPlusTreeLeafPage::Insert(): try to insert a key which already exist");
+
+  {
+    auto index = FindLowKey(key, comparator);
+    if (index < static_cast<size_t>(GetSize()) && comparator(KeyAt(index), key) == 0 && TombstonesContains(index)) {
+      // key in tombstones, revive
+      rid_array_[index] = value;
+      TombstonesRemove(index);
+      return std::nullopt;
+    }
+  }
+
+  if (!IsFull()) {
+    // not full
+    InsertHelper(key, value, comparator);
+    return std::nullopt;
+  }
+
+  // page is full, try to clear tombstones
+  if (!IsTombstonesEmpty()) {
+    // can evict tombstones
+    EvictTombstones();
+    InsertHelper(key, value, comparator);
+    return std::nullopt;
+  }
+
+  // need to split
+
+  /*
+  first, we find where to insert
+  we assume that we already insert key into key_array_
+  then, we calculate the mid_index based on this assumption, making second half is bigger(equal)
+  warning: any index is index of value_array_, so when calculating with key_array_, we must add 1
+  */
+
+  auto begin_iter = Begin(key_array_);
+  auto end_iter = End(key_array_);
+  auto assume_end_iter = end_iter + 1;
+  auto insert_iter = std::upper_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
+  auto split_begin_iter = begin_iter + std::distance(begin_iter, assume_end_iter) / 2;
+  // result is begin with a invalid key
+  std::vector<MappingType> result;
+  result.reserve(std::distance(split_begin_iter, assume_end_iter));
+  if (insert_iter < split_begin_iter) {
+    // insert into first half
+    // copy last element of first half to front of second half
+    result.emplace_back(*(split_begin_iter - 1), *(GetCorrespondValueIter(split_begin_iter - 1)));
+    // copy rest of value to second half
+    for (auto iter = split_begin_iter; iter != end_iter; ++iter) {
+      result.emplace_back(*iter, *GetCorrespondValueIter(iter));
+    }
+    SetSize(std::distance(Begin(rid_array_), GetCorrespondValueIter(split_begin_iter - 1)));
+    InsertHelper(insert_iter, key, value, comparator);
+  } else {
+    // insert into second half
+    // copy kv before insert_iter
+    for (auto iter = split_begin_iter; iter != insert_iter; ++iter) {
+      result.emplace_back(*iter, *GetCorrespondValueIter(iter));
+    }
+    // insert target kv
+    result.emplace_back(key, value);
+    // copy kv after insert index
+    for (auto iter = insert_iter; iter != end_iter; ++iter) {
+      result.emplace_back(*iter, *GetCorrespondValueIter(iter));
+    }
+    SetSize(std::distance(Begin(rid_array_), GetCorrespondValueIter(split_begin_iter)));
+  }
+
+  BUSTUB_ASSERT(!IsInsufficient(), "BPlusTreeLeafPage::Insert(): first half become insufficient after split");
+  BUSTUB_ASSERT(result.size() >= static_cast<size_t>(GetMinSize()),
+                "BPlusTreeLeafPage::Insert(): second half become insufficient after split");
+  return result;
+}
+
+// remove KV at index
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(size_t index) {
+  BUSTUB_ASSERT(0 <= index && index < static_cast<size_t>(GetSize()),
+                "BPlusTreeInternalPage::Remove(): index out of range");
+
+  if (!IsTombstonesFull()) {
+    // tombstones not full, add to it
+    TombstonesPushBack(index);
+  } else if (!IsTombstonesEmpty()) {
+    // tombstones full, evict
+    auto evict_index = EvictTombstones();
+    if (evict_index < static_cast<size_t>(index)) {
+      --index;
+    }
+    TombstonesPushBack(index);
+  } else {
+    // tombstones not enabled
+    auto key_evict_iter = Begin(key_array_) + index;
+    auto value_evict_iter = Begin(rid_array_) + index;
+    std::copy(key_evict_iter + 1, End(key_array_), key_evict_iter);
+    std::copy(value_evict_iter + 1, End(rid_array_), value_evict_iter);
+    ChangeSizeBy(-1);
+  }
+}
+
+// remove key
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator &comparator) {
+  BUSTUB_ASSERT(GetValue(key, comparator) != std::nullopt,
+                "BPlusTreeInternalPage::Remove(): try to remove a non-exist key");
+
+  auto key_iter = std::lower_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
+  auto key_index = std::distance(Begin(key_array_), key_iter);
+  Remove(key_index);
+}
+
+// return true if key in key_array_ and not in tombstones
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::Contains(const KeyType &key, const KeyComparator &comparator) const -> bool {
+  auto index = FindLowKey(key, comparator);
+  return index < static_cast<size_t>(GetSize()) && comparator(KeyAt(index), key) == 0 && !TombstonesContains(index);
+}
+
+// assume page is healthy
+// return min kv and whether it is in tombstones
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMinKv() -> std::pair<MappingType, bool> {
+  BUSTUB_ASSERT(IsHealthy(), "BPlusTreeInternalPage::InsertHelper(): try to evict from a unhealthy page");
+
+  MappingType result;
+  size_t index = 0;
+  result.first = KeyAt(index);
+  result.second = ValueAt(index);
+  bool is_in_tombstones = TombstonesContains(index);
+  // remove kv
+  std::copy(Begin(key_array_) + 1, End(key_array_), Begin(key_array_));
+  std::copy(Begin(rid_array_) + 1, End(rid_array_), Begin(rid_array_));
+  ChangeSizeBy(-1);
+
+  if (is_in_tombstones) {
+    TombstonesRemove(index);
+  }
+  // adjust tombstones indices
+  std::for_each(TombstonesBegin(), TombstonesEnd(), [](auto &tomb) { --tomb; });
+
+  return {result, is_in_tombstones};
+}
+
+// assume page is healthy
+// return max kv and whether it is in tombstones
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictMaxKv() -> std::pair<MappingType, bool> {
+  BUSTUB_ASSERT(IsHealthy(), "BPlusTreeInternalPage::InsertHelper(): try to evict from a unhealthy page");
+
+  MappingType result;
+  size_t index = GetSize() - 1;
+  result.first = KeyAt(index);
+  result.second = ValueAt(index);
+  bool is_in_tombstones = TombstonesContains(index);
+  // remove kv
+  ChangeSizeBy(-1);
+
+  if (is_in_tombstones) {
+    TombstonesPopBack();
+  }
+
+  return {result, is_in_tombstones};
+}
+
+// assume another is at right of this, in another words, all another's key are bigger than this
+// merge key, value, tombstones
+// set next page id to skip merged page
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Merge(BPlusTreeLeafPage &another, const KeyComparator &comparator) {
+  BUSTUB_ASSERT(GetSize() + another.GetSize() >= GetMinSize(), "BPlusTreeInternalPage::Merge(): invalid after merge");
+  if (GetSize() != 0 && another.GetSize() != 0) {
+    BUSTUB_ASSERT(comparator(BackKey(), another.FrontKey()) < 0, "BPlusTreeInternalPage::Merge(): unorder merge");
+  }
+
+  // To follow the doc: "recipient leaf (this) should have its tombstones processed first"
+  // and maintain FIFO order, we process each entry from 'another' using PushBack.
+  // PushBack will handle EvictTombstones() on 'this' if the tombstone buffer gets full.
+  for (auto key_iter = another.Begin(another.key_array_); key_iter != another.End(another.key_array_); ++key_iter) {
+    auto value_iter = another.GetCorrespondValueIter(key_iter);
+    PushBack(*key_iter, *value_iter, comparator, false);
+  }
+  auto another_tombstones = another.GetTombstones();
+  for (const auto &tomb_key : another_tombstones) {
+    Remove(tomb_key, comparator);
+  }
+
+  SetNextPageId(another.GetNextPageId());
+}
+
+// assume not full
+// assume key is not exist
+// assume iter is valid
+// assume *iter = key is ordered
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(KeyIterType key_iter, const KeyType &key, const ValueType &value,
+                                              const KeyComparator &comparator) {
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeInternalPage::InsertHelper(): try to insert to a full page");
+  BUSTUB_ASSERT(!Contains(key, comparator),
+                "BPlusTreeInternalPage::InsertHelper(): try to insert a key which already exist");
+  BUSTUB_ASSERT(
+      std::upper_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator)) == key_iter,
+      "BPlusTreeInternalPage::InsertHelper(): try to insert a key to a unordered place");
+
+  auto value_iter = GetCorrespondValueIter(key_iter);
+  std::move_backward(key_iter, End(key_array_), End(key_array_) + 1);
+  *key_iter = key;
+  std::move_backward(value_iter, End(rid_array_), End(rid_array_) + 1);
+  *value_iter = value;
+
+  // adjust tombstones
+  std::for_each(TombstonesBegin(), TombstonesEnd(),
+                [insert_index = static_cast<size_t>(std::distance(Begin(key_array_), key_iter))](auto &index) {
+                  if (index >= insert_index) {
+                    ++index;
+                  }
+                });
+  ChangeSizeBy(1);
+}
+
+// assume not full
+// assume key is not exist
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::InsertHelper(const KeyType &key, const ValueType &value,
+                                              const KeyComparator &comparator) {
+  BUSTUB_ASSERT(!IsFull(), "BPlusTreeLeafPage::InsertHelper(): try to insert to a full page");
+  BUSTUB_ASSERT(!Contains(key, comparator),
+                "BPlusTreeLeafPage::InsertHelper(): try to insert a key which already exist");
+
+  auto key_iter = std::upper_bound(Begin(key_array_), End(key_array_), key, ConvertToStdComparator(comparator));
+  return InsertHelper(key_iter, key, value, comparator);
+}
+
+// key/value may move after eviction
+// all elements in front of evict index will not be affected
+// all elements behind it will move forward
+// return evicted index
+// user must reacquire index based on return index
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::EvictTombstones() -> size_t {
+  BUSTUB_ASSERT(!IsTombstonesEmpty(), "BPlusTreeLeafPage::EvictTombstones(): try to evict a empty tombstones");
+
+  auto evict_index = *TombstonesBegin();
+  auto key_evict_iter = Begin(key_array_) + evict_index;
+  auto value_evict_iter = GetCorrespondValueIter(key_evict_iter);
+  std::copy(key_evict_iter + 1, End(key_array_), key_evict_iter);
+  std::copy(value_evict_iter + 1, End(rid_array_), value_evict_iter);
+  TombstonesPopFront();
+  // adjust tombstones
+  std::for_each(TombstonesBegin(), TombstonesEnd(), [evict_index](auto &index) {
+    if (index >= evict_index) {
+      --index;
+    }
+  });
+  ChangeSizeBy(-1);
+  return evict_index;
+}
 
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;
 
