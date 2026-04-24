@@ -144,7 +144,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     return false;
   }
 
-  // optimistic try to insert, return false if failed
+  // optimistic try to insert
   enum class OptimisticTryResult { kSuccess, kFailed, kKeyExist };
   auto optimistic_try = [this, &key, &value]() -> OptimisticTryResult {
     Context context;
@@ -174,14 +174,17 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
       // because we drop read page guard of header page in this section
       // we need to acquire root page latch here
       leaf_page_guard = bpm_->WritePage(context.root_page_id_);
+      context.header_page_ = std::nullopt;
     } else if (auto root_page_guard = bpm_->ReadPage(context.root_page_id_);
                root_page_guard.As<InternalPage>()->IsLeafPage()) {
       // root is leaf
       root_page_guard.Drop();
       leaf_page_guard = bpm_->WritePage(context.root_page_id_);
+      read_header_page_guard.Drop();
     } else {
       // we must maintain two page guard, because we need to get write page guard of leaf page
       auto internal_page_guard = bpm_->ReadPage(context.root_page_id_);
+      read_header_page_guard.Drop();
       // root page is not leaf, walk down
       // walk to leaf page
       // crab grab lock
@@ -193,6 +196,7 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
           // get write page guard of leaf page and quit
           auto leaf_page_id = next_page_guard.GetPageId();
           next_page_guard.Drop();
+          // leaf page can be modified here
           leaf_page_guard = bpm_->WritePage(leaf_page_id);
           break;
         }
@@ -202,13 +206,13 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
 
     // leaf_page_guard is ready here
 
-    if (auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>()); leaf_page.Contains(key, comparator_)) {
+    if (auto &leaf_page = *(leaf_page_guard.As<LeafPage>()); leaf_page.Contains(key, comparator_)) {
       // key already exist
       return OptimisticTryResult::kKeyExist;
     }
-    if (auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>()); !leaf_page.IsLeafFull()) {
+    if (auto &leaf_page = *(leaf_page_guard.As<LeafPage>()); !leaf_page.IsLeafFull()) {
       // leaf not full, no need to split
-      leaf_page.Insert(key, value, comparator_);
+      leaf_page_guard.AsMut<LeafPage>()->Insert(key, value, comparator_);
       return OptimisticTryResult::kSuccess;
     }
 
@@ -230,18 +234,42 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // optimistic failed
   // pessimistic way
   Context context;
-  context.header_page_ = bpm_->WritePage(header_page_id_);
-  context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
-  context.write_set_.push_back(bpm_->WritePage(context.root_page_id_));
-
-  // acquire write latches all way down to leaf
-  for (auto internal_page = context.write_set_.back().AsMut<InternalPage>(); !internal_page->IsLeafPage();
-       internal_page = context.write_set_.back().AsMut<InternalPage>()) {
-    context.write_set_.push_back(bpm_->WritePage(internal_page->GetValue(key, comparator_)));
+  // contxt.write_set_ is a set of page need to be modified
+  {
+    auto header_page_guard = bpm_->WritePage(header_page_id_);
+    context.root_page_id_ = header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+    if (context.root_page_id_ == INVALID_PAGE_ID) {
+      return false;
+    }
+    // get root page guard, then release head page guard
+    auto root_page_guard = bpm_->WritePage(context.root_page_id_);
+    if (root_page_guard.As<InternalPage>()->IsFull()) {
+      // root is full, it may be modified, so we need to hold latch of header page
+      context.header_page_ = std::move(header_page_guard);
+    }
+    context.write_set_.push_back(std::move(root_page_guard));
   }
 
+  // acquire write latches all way down to leaf
+  for (auto internal_page = context.write_set_.back().As<InternalPage>(); !internal_page->IsLeafPage();
+       internal_page = context.write_set_.back().As<InternalPage>()) {
+    auto next_page_guard = bpm_->WritePage(internal_page->GetValue(key, comparator_));
+    if (!next_page_guard.template As<InternalPage>()->IsFull()) {
+      // next page is not full, do not need to insert to upstream
+      // we can release all write latches of upstream
+      context.write_set_.clear();
+      context.header_page_ = std::nullopt;
+    }
+    context.write_set_.push_back(std::move(next_page_guard));
+  }
+
+  // context.write_set_ all need to be modified
+  BUSTUB_ASSERT(std::all_of(context.write_set_.cbegin() + 1, context.write_set_.cend(),
+                            [](const auto &guard) { return guard.template As<InternalPage>()->IsFull(); }),
+                "BPlusTree::Insert(): invalid context.write_set_");
+
   auto leaf_page_id = context.write_set_.back().GetPageId();
-  if (auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>()); leaf_page.Contains(key, comparator_)) {
+  if (auto &leaf_page = *(context.write_set_.back().As<LeafPage>()); leaf_page.Contains(key, comparator_)) {
     // key already exist
     return false;
   }
@@ -254,6 +282,22 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     return true;
   }
 
+  // return new root page guard
+  auto create_new_root_page = [this, &context](const KeyType &key, page_id_t left, page_id_t right) {
+    auto new_page_id = bpm_->NewPage();
+    auto new_page_guard = bpm_->WritePage(new_page_id);
+    auto &new_page = *(new_page_guard.AsMut<InternalPage>());
+    new_page.Init(internal_max_size_);
+    new_page.SetSize(1);
+    new_page.SetValueAt(0, left);
+    new_page.PushBack(key, right, comparator_);
+    BUSTUB_ASSERT(context.header_page_ != std::nullopt,
+                  "BPlusTree::Insert()::create_new_root_page(): header page guard is not held");
+    context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_page_id;
+    context.root_page_id_ = new_page_id;
+    return std::move(new_page_guard);
+  };
+
   // split happened
   // need to insert all way up
   // new page for second half
@@ -265,20 +309,6 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   // set next page id
   leaf_new_page.SetNextPageId(leaf_page.GetNextPageId());
   leaf_page.SetNextPageId(leaf_new_page_id);
-
-  // return new root page guard
-  auto create_new_root_page = [this, &context](const KeyType &key, page_id_t left, page_id_t right) {
-    auto new_page_id = bpm_->NewPage();
-    auto new_page_guard = bpm_->WritePage(new_page_id);
-    auto &new_page = *(new_page_guard.AsMut<InternalPage>());
-    new_page.Init(internal_max_size_);
-    new_page.SetSize(1);
-    new_page.SetValueAt(0, left);
-    new_page.PushBack(key, right, comparator_);
-    context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_page_id;
-    context.root_page_id_ = new_page_id;
-    return std::move(new_page_guard);
-  };
 
   if (leaf_page_id == context.root_page_id_) {
     // leaf is root, create a new root and return
@@ -313,20 +343,21 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   };
 
   // leaf is not root, need to insert all way up
-  // rend() - 1 is root page guard
-  // stop at root page
+  // rend() - 1 is last page guard
+  // stop at last page
   KeyType push_up_key = std::move(leaf_second_half->front().first);
   page_id_t push_up_value = leaf_new_page_id;
-  for (auto upstream_iter = context.write_set_.rbegin(), root_iter = context.write_set_.rend() - 1;
-       upstream_iter != root_iter; ++upstream_iter) {
+  for (auto upstream_iter = context.write_set_.rbegin(); upstream_iter != context.write_set_.rend() - 1;
+       upstream_iter = context.write_set_.rbegin()) {
     auto &upstream_page = *(upstream_iter->AsMut<InternalPage>());
     auto next_kv = insert_to_upstream_page(upstream_page, push_up_key, push_up_value);
+    BUSTUB_ASSERT(next_kv != std::nullopt, "BPlusTree::Insert(): upstream must split");
     // push up success, release current page
     context.write_set_.pop_back();
-    if (next_kv == std::nullopt) {
-      // upstream not split
-      return true;
-    }
+    // if (next_kv == std::nullopt) {
+    //   // upstream not split
+    //   return true;
+    // }
     // upstream split
     // setup push up key/value for next loop
     // key[0] in internal page is invalid, so we need to grab it from upstream_second_half
@@ -334,18 +365,28 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
     push_up_value = next_kv->second;
   }
 
-  // reach root page
+  // reach last page
   BUSTUB_ASSERT(context.write_set_.size() == 1, "BPlusTree::Insert(): context write set has not only root page");
-  auto &root_page = *(context.write_set_.back().AsMut<InternalPage>());
-  auto next_kv = insert_to_upstream_page(root_page, push_up_key, push_up_value);
+  auto &last_page = *(context.write_set_.back().AsMut<InternalPage>());
+  auto last_page_id = context.write_set_.back().GetPageId();
+  auto next_kv = insert_to_upstream_page(last_page, push_up_key, push_up_value);
   context.write_set_.pop_back();
-  if (next_kv == std::nullopt) {
-    // root not split
+
+  if (last_page_id == context.root_page_id_) {
+    // last page is root page
+    if (next_kv == std::nullopt) {
+      // root not split
+      return true;
+    }
+
+    // root split
+    create_new_root_page(next_kv->first, context.root_page_id_, next_kv->second);
     return true;
   }
 
-  // root split
-  create_new_root_page(next_kv->first, context.root_page_id_, next_kv->second);
+  // last page is not root page
+  // impossible to split
+  BUSTUB_ASSERT(next_kv == std::nullopt, "BPlusTree::Insert(): last page is impossible to split");
   return true;
 }
 
@@ -385,15 +426,19 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     auto read_header_page_guard = bpm_->ReadPage(header_page_id_);
     WritePageGuard leaf_page_guard;
     context.root_page_id_ = read_header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+    if (context.root_page_id_ == INVALID_PAGE_ID) {
+      return false;
+    }
     if (auto root_page_guard = bpm_->ReadPage(context.root_page_id_);
         root_page_guard.As<InternalPage>()->IsLeafPage()) {
       // root is leaf
       root_page_guard.Drop();
-      // root can be changed here
       leaf_page_guard = bpm_->WritePage(context.root_page_id_);
+      read_header_page_guard.Drop();
     } else {
       // we must maintain two page guard, because we need to get write page guard of leaf page
       auto internal_page_guard = bpm_->ReadPage(context.root_page_id_);
+      read_header_page_guard.Drop();
       // root page is not leaf, walk down
       // walk to leaf page
       // crab grab lock
@@ -414,7 +459,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
 
     // leaf_page_guard is ready here
-    auto &leaf_page = *(leaf_page_guard.AsMut<LeafPage>());
+    auto &leaf_page = *(leaf_page_guard.As<LeafPage>());
     if (!leaf_page.Contains(key, comparator_)) {
       // key not exist
       debuger.Print(fmt::format("Remove()::optimistic_try(): key[{}] not exist\n", key.ToString()));
@@ -424,7 +469,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     // key exist
     if (leaf_page_guard.GetPageId() == context.root_page_id_) {
       // leaf is root, remove and return
-      leaf_page.Remove(key, comparator_);
+      leaf_page_guard.AsMut<LeafPage>()->Remove(key, comparator_);
       if (!leaf_page.IsEmpty()) {
         debuger.Print(fmt::format("Remove()::optimistic_try(): leaf is root and not empty, remove and return\n"));
 
@@ -434,7 +479,6 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       // delete empty root page
       auto leaf_page_id = leaf_page_guard.GetPageId();
       leaf_page_guard.Drop();
-      read_header_page_guard.Drop();
       // somebody can change the tree here, between two latches
       context.header_page_ = bpm_->WritePage(header_page_id_);
       if (context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_ == leaf_page_id &&
@@ -450,7 +494,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     // leaf is not root
     if (leaf_page.IsHealthy()) {
       // leaf is healthy, no need to merge
-      leaf_page.Remove(key, comparator_);
+      leaf_page_guard.AsMut<LeafPage>()->Remove(key, comparator_);
       return true;
     }
 
@@ -474,23 +518,47 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   debuger.Print("Remove(): pessimistic try\n");
 
   Context context;
-  context.header_page_ = bpm_->WritePage(header_page_id_);
-  context.root_page_id_ = context.header_page_->As<BPlusTreeHeaderPage>()->root_page_id_;
-  context.write_set_.push_back(bpm_->WritePage(context.root_page_id_));
+  {
+    auto header_page_guard = bpm_->WritePage(header_page_id_);
+    context.root_page_id_ = header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+    if (context.root_page_id_ == INVALID_PAGE_ID) {
+      return;
+    }
+    // get root page guard, then release head page guard
+    auto root_page_guard = bpm_->WritePage(context.root_page_id_);
+    if (auto &root_page = *root_page_guard.As<InternalPage>();
+        (!root_page.IsLeafPage() && root_page.GetSize() == 2) || (root_page.IsLeafPage() && root_page.GetSize() == 1)) {
+      // root may be modified, so we need to hold latch of header page
+      context.header_page_ = std::move(header_page_guard);
+    }
+    context.write_set_.push_back(std::move(root_page_guard));
+  }
 
   // stores value index all way down to leaf
   std::stack<size_t> value_index_stack;
   // acquire write latches all way down to leaf
-  for (auto internal_page = context.write_set_.back().AsMut<InternalPage>(); !internal_page->IsLeafPage();
-       internal_page = context.write_set_.back().AsMut<InternalPage>()) {
+  for (auto internal_page = context.write_set_.back().As<InternalPage>(); !internal_page->IsLeafPage();
+       internal_page = context.write_set_.back().As<InternalPage>()) {
     auto index = internal_page->GetValueIndex(key, comparator_);
+    auto next_page_guard = bpm_->WritePage(internal_page->ValueAt(index));
+    if (next_page_guard.template As<InternalPage>()->IsHealthy()) {
+      // next page is healthy, do not need to modify upstreams
+      // we can release all write latches of upstream
+      context.write_set_.clear();
+      context.header_page_ = std::nullopt;
+      value_index_stack = {};
+    }
     value_index_stack.push(index);
-    auto page_id = internal_page->ValueAt(index);
-    context.write_set_.push_back(bpm_->WritePage(page_id));
+    context.write_set_.push_back(std::move(next_page_guard));
   }
 
+  // context.write_set_ all need to be modified
+  BUSTUB_ASSERT(std::all_of(context.write_set_.cbegin() + 1, context.write_set_.cend(),
+                            [](const auto &guard) { return guard.template As<InternalPage>()->IsCritical(); }),
+                "BPlusTree::Remove(): invalid context.write_set_");
+
   auto leaf_page_id = context.write_set_.back().GetPageId();
-  if (auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>()); !leaf_page.Contains(key, comparator_)) {
+  if (auto &leaf_page = *(context.write_set_.back().As<LeafPage>()); !leaf_page.Contains(key, comparator_)) {
     // key not exist
 
     debuger.Print(fmt::format("Remove(): key[{}] not exist\n", key.ToString()));
@@ -501,7 +569,21 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   // key exist, can remove
   auto &leaf_page = *(context.write_set_.back().AsMut<LeafPage>());
   leaf_page.Remove(key, comparator_);
-  if (leaf_page_id == context.root_page_id_ || !leaf_page.IsInsufficient()) {
+
+  if (leaf_page_id == context.root_page_id_) {
+    if (!leaf_page.IsEmpty()) {
+      return;
+    }
+    // delete empty root page
+    debuger.Print(fmt::format("Remove(): root empty, delete root[{}]\n", leaf_page_id));
+    BUSTUB_ASSERT(context.header_page_ != std::nullopt, "BPlusTree::Insert()::: header page guard is not held");
+
+    context.write_set_.pop_back();
+    bpm_->DeletePage(leaf_page_id);
+    context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = INVALID_PAGE_ID;
+    return;
+  }
+  if (!leaf_page.IsInsufficient()) {
     // no need to merge
     return;
   }
@@ -675,11 +757,11 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   }
 
   // need to merge all way up
-  // rend() - 1 is root page guard
-  // stop at root page
-  for (auto current_iter = context.write_set_.rbegin(), upstream_iter = current_iter + 1,
-            root_iter = context.write_set_.rend() - 1;
-       current_iter != root_iter; ++current_iter, upstream_iter = current_iter + 1) {
+  // rend() - 1 is last page guard
+  // stop at last page
+  for (auto current_iter = context.write_set_.rbegin(), upstream_iter = current_iter + 1;
+       current_iter != context.write_set_.rend() - 1;
+       current_iter = context.write_set_.rbegin(), upstream_iter = current_iter + 1) {
     auto &current_page = *(current_iter->AsMut<InternalPage>());
     auto &upstream_page = *(upstream_iter->AsMut<InternalPage>());
     auto current_value_index = value_index_stack.top();
@@ -697,13 +779,20 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
 
   // reach root page
   BUSTUB_ASSERT(context.write_set_.size() == 1, "BPlusTree::Insert(): context write set has not only root page");
-  auto &root_page = *(context.write_set_.back().AsMut<InternalPage>());
-  if (root_page.IsEmpty()) {
+  auto &last_page = *(context.write_set_.back().AsMut<InternalPage>());
+  auto last_page_id = context.write_set_.back().GetPageId();
+  if (last_page_id != context.root_page_id_) {
+    // last not root
+    return;
+  }
+
+  // last is root
+  if (last_page.IsEmpty()) {
     // delete empty root page
     // assign new root page
     debuger.Print(fmt::format("Remove(): root empty, new root[{}]\n", new_root_page_id));
+    BUSTUB_ASSERT(context.header_page_ != std::nullopt, "BPlusTree::Remove(): header page guard is not held");
 
-    context.write_set_.back().Drop();
     context.write_set_.pop_back();
     bpm_->DeletePage(context.root_page_id_);
     context.header_page_->AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_root_page_id;
@@ -728,6 +817,7 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
   }
   auto header_page_read_guard = bpm_->ReadPage(header_page_id_);
   auto page_guard = bpm_->ReadPage(header_page_read_guard.As<BPlusTreeHeaderPage>()->root_page_id_);
+  header_page_read_guard.Drop();
   for (auto page = page_guard.As<InternalPage>(); !page->IsLeafPage();
        page_guard = bpm_->ReadPage(page->ValueAt(0)), page = page_guard.As<InternalPage>()) {
   }
@@ -752,6 +842,7 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
   }
   auto header_page_read_guard = bpm_->ReadPage(header_page_id_);
   auto page_guard = bpm_->ReadPage(header_page_read_guard.As<BPlusTreeHeaderPage>()->root_page_id_);
+  header_page_read_guard.Drop();
   for (auto page = page_guard.As<InternalPage>(); !page->IsLeafPage();
        page_guard = bpm_->ReadPage(page->GetValue(key, comparator_)), page = page_guard.As<InternalPage>()) {
   }
