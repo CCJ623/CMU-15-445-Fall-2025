@@ -576,7 +576,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
     }
     // delete empty root page
     debuger.Print(fmt::format("Remove(): root empty, delete root[{}]\n", leaf_page_id));
-    BUSTUB_ASSERT(context.header_page_ != std::nullopt, "BPlusTree::Insert()::: header page guard is not held");
+    BUSTUB_ASSERT(context.header_page_ != std::nullopt, "BPlusTree::Remove(): header page guard is not held");
 
     context.write_set_.pop_back();
     bpm_->DeletePage(leaf_page_id);
