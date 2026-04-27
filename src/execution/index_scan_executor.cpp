@@ -11,7 +11,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "execution/executors/index_scan_executor.h"
+#include <optional>
+#include <vector>
 #include "common/macros.h"
+#include "common/rid.h"
+#include "storage/table/tuple.h"
+#include "type/value.h"
 
 namespace bustub {
 
@@ -21,15 +26,96 @@ namespace bustub {
  * @param plan the index scan plan to be executed
  */
 IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanPlanNode *plan)
-    : AbstractExecutor(exec_ctx) {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
-}
+    : AbstractExecutor(exec_ctx), plan_(plan), iter_(std::nullopt) {}
 
-void IndexScanExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+void IndexScanExecutor::Init() {
+  table_info_ = exec_ctx_->GetCatalog()->GetTable(plan_->table_oid_).get();
+  index_ = exec_ctx_->GetCatalog()->GetIndex(plan_->GetIndexOid())->index_.get();
+
+  if (plan_->pred_keys_.empty()) {
+    // scan mode, init iter
+    iter_.emplace(dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(
+                      exec_ctx_->GetCatalog()->GetIndex(plan_->GetIndexOid())->index_.get())
+                      ->GetBeginIterator());
+    return;
+  }
+
+  // point look up mode
+  pred_keys_index_ = 0;
+}
 
 auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch,
                              size_t batch_size) -> bool {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
+  tuple_batch->clear();
+  rid_batch->clear();
+
+  if (plan_->pred_keys_.empty()) {
+    // scan mode
+    for (; tuple_batch->size() < batch_size && !iter_->IsEnd(); ++(*iter_)) {
+      auto rid = (*(*iter_)).second;
+      auto [meta, tuple] = table_info_->table_->GetTuple(rid);
+      if (meta.is_deleted_) {
+        continue;
+      }
+
+      if (plan_->filter_predicate_ != nullptr) {
+        // has filter
+        auto value = plan_->filter_predicate_->Evaluate(&tuple, table_info_->schema_);
+        if (value.IsNull() || !value.GetAs<bool>()) {
+          // failed filter
+          continue;
+        }
+        // passed filter
+      }
+
+      // no filter
+      tuple_batch->push_back(tuple);
+      rid_batch->push_back(rid);
+    }
+
+    return !tuple_batch->empty();
+  }
+
+  // point look up
+
+  auto &tree = GetTree();
+  for (; pred_keys_index_ < plan_->pred_keys_.size() && tuple_batch->size() < batch_size; ++pred_keys_index_) {
+    const auto &expr = *plan_->pred_keys_[pred_keys_index_];
+    std::vector<Value> values;
+    std::vector<RID> rids;
+    values.push_back(expr.Evaluate(nullptr, table_info_->schema_));
+    tree.ScanKey(Tuple{values, index_->GetKeySchema()}, &rids, exec_ctx_->GetTransaction());
+
+    BUSTUB_ASSERT(!rids.empty(), "IndexScanExecutor::Next(): rids is empty");
+    BUSTUB_ASSERT(rids.size() == 1, "IndexScanExecutor::Next(): duplicate key");
+
+    const auto &rid = rids.front();
+
+    auto [meta, tuple] = table_info_->table_->GetTuple(rid);
+    if (meta.is_deleted_) {
+      continue;
+    }
+
+    if (plan_->filter_predicate_ != nullptr) {
+      // has filter
+      auto value = plan_->filter_predicate_->Evaluate(&tuple, table_info_->schema_);
+      if (value.IsNull() || !value.GetAs<bool>()) {
+        // failed filter
+        continue;
+      }
+      // passed filter
+    }
+
+    // no filter
+    tuple_batch->push_back(tuple);
+    rid_batch->push_back(rid);
+  }
+
+  return !tuple_batch->empty();
+}
+
+auto IndexScanExecutor::GetTree() -> BPlusTreeIndexForTwoIntegerColumn & {
+  return *dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(index_);
 }
 
 }  // namespace bustub

@@ -13,8 +13,11 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "catalog/catalog.h"
+#include "common/rid.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/insert_plan.h"
@@ -42,6 +45,12 @@ class InsertExecutor : public AbstractExecutor {
  private:
   /** The insert plan node to be executed*/
   const InsertPlanNode *plan_;
+  const TableInfo *table_info_;
+  std::unique_ptr<AbstractExecutor> child_executor_;
+  std::optional<size_t> count_;
+
+  std::vector<Tuple> child_tuples_;
+  std::vector<RID> child_rids_;
 };
 
 }  // namespace bustub

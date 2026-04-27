@@ -13,8 +13,10 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "common/rid.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/update_plan.h"
@@ -50,5 +52,9 @@ class UpdateExecutor : public AbstractExecutor {
 
   /** The child executor to obtain value from */
   std::unique_ptr<AbstractExecutor> child_executor_;
+  std::vector<Tuple> child_tuples_;
+  std::vector<RID> child_rids_;
+
+  std::optional<size_t> count_;
 };
 }  // namespace bustub
