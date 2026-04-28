@@ -63,4 +63,8 @@ using BPlusTreeIndexIteratorForTwoIntegerColumn =
     IndexIterator<IntegerKeyType_BTree, IntegerValueType_BTree, IntegerComparatorType_BTree>;
 using IntegerHashFunctionType = HashFunction<IntegerKeyType_BTree>;
 
+using BPlusTreeIndexForOneIntegerColumn = BPlusTreeIndex<GenericKey<4>, IntegerValueType_BTree, GenericComparator<4>>;
+using BPlusTreeIndexIteratorForOneIntegerColumn =
+    IndexIterator<GenericKey<4>, IntegerValueType_BTree, GenericComparator<4>>;
+
 }  // namespace bustub

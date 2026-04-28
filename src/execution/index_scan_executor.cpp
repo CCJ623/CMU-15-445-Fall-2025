@@ -34,9 +34,11 @@ void IndexScanExecutor::Init() {
 
   if (plan_->pred_keys_.empty()) {
     // scan mode, init iter
-    iter_.emplace(dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(
-                      exec_ctx_->GetCatalog()->GetIndex(plan_->GetIndexOid())->index_.get())
-                      ->GetBeginIterator());
+    if (auto tree = dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(index_); tree != nullptr) {
+      iter_.emplace(tree->GetBeginIterator());
+    } else {
+      iter4_.emplace(dynamic_cast<BPlusTreeIndexForOneIntegerColumn *>(index_)->GetBeginIterator());
+    }
     return;
   }
 
@@ -51,26 +53,50 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
 
   if (plan_->pred_keys_.empty()) {
     // scan mode
-    for (; tuple_batch->size() < batch_size && !iter_->IsEnd(); ++(*iter_)) {
-      auto rid = (*(*iter_)).second;
-      auto [meta, tuple] = table_info_->table_->GetTuple(rid);
-      if (meta.is_deleted_) {
-        continue;
-      }
-
-      if (plan_->filter_predicate_ != nullptr) {
-        // has filter
-        auto value = plan_->filter_predicate_->Evaluate(&tuple, table_info_->schema_);
-        if (value.IsNull() || !value.GetAs<bool>()) {
-          // failed filter
+    if (iter_.has_value()) {
+      for (; tuple_batch->size() < batch_size && !iter_->IsEnd(); ++(*iter_)) {
+        auto rid = (*(*iter_)).second;
+        auto [meta, tuple] = table_info_->table_->GetTuple(rid);
+        if (meta.is_deleted_) {
           continue;
         }
-        // passed filter
-      }
 
-      // no filter
-      tuple_batch->push_back(tuple);
-      rid_batch->push_back(rid);
+        if (plan_->filter_predicate_ != nullptr) {
+          // has filter
+          auto value = plan_->filter_predicate_->Evaluate(&tuple, table_info_->schema_);
+          if (value.IsNull() || !value.GetAs<bool>()) {
+            // failed filter
+            continue;
+          }
+          // passed filter
+        }
+
+        // no filter
+        tuple_batch->push_back(tuple);
+        rid_batch->push_back(rid);
+      }
+    } else if (iter4_.has_value()) {  // for small key
+      for (; tuple_batch->size() < batch_size && !iter4_->IsEnd(); ++(*iter4_)) {
+        auto rid = (*(*iter4_)).second;
+        auto [meta, tuple] = table_info_->table_->GetTuple(rid);
+        if (meta.is_deleted_) {
+          continue;
+        }
+
+        if (plan_->filter_predicate_ != nullptr) {
+          // has filter
+          auto value = plan_->filter_predicate_->Evaluate(&tuple, table_info_->schema_);
+          if (value.IsNull() || !value.GetAs<bool>()) {
+            // failed filter
+            continue;
+          }
+          // passed filter
+        }
+
+        // no filter
+        tuple_batch->push_back(tuple);
+        rid_batch->push_back(rid);
+      }
     }
 
     return !tuple_batch->empty();
@@ -78,19 +104,20 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
 
   // point look up
 
-  auto &tree = GetTree();
   for (; pred_keys_index_ < plan_->pred_keys_.size() && tuple_batch->size() < batch_size; ++pred_keys_index_) {
     const auto &expr = *plan_->pred_keys_[pred_keys_index_];
     std::vector<Value> values;
     std::vector<RID> rids;
     values.push_back(expr.Evaluate(nullptr, table_info_->schema_));
-    tree.ScanKey(Tuple{values, index_->GetKeySchema()}, &rids, exec_ctx_->GetTransaction());
+    index_->ScanKey(Tuple{values, index_->GetKeySchema()}, &rids, exec_ctx_->GetTransaction());
 
-    BUSTUB_ASSERT(!rids.empty(), "IndexScanExecutor::Next(): rids is empty");
+    // key not found
+    if (rids.empty()) {
+      continue;
+    }
     BUSTUB_ASSERT(rids.size() == 1, "IndexScanExecutor::Next(): duplicate key");
 
     const auto &rid = rids.front();
-
     auto [meta, tuple] = table_info_->table_->GetTuple(rid);
     if (meta.is_deleted_) {
       continue;
@@ -113,9 +140,4 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
 
   return !tuple_batch->empty();
 }
-
-auto IndexScanExecutor::GetTree() -> BPlusTreeIndexForTwoIntegerColumn & {
-  return *dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(index_);
-}
-
 }  // namespace bustub
