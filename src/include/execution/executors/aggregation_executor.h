@@ -13,6 +13,8 @@
 #pragma once
 
 #include <memory>
+#include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -23,6 +25,7 @@
 #include "execution/expressions/abstract_expression.h"
 #include "execution/plans/aggregation_plan.h"
 #include "storage/table/tuple.h"
+#include "type/value.h"
 #include "type/value_factory.h"
 
 namespace bustub {
@@ -79,7 +82,64 @@ class SimpleAggregationHashTable {
       }
     }
 
-    UNIMPLEMENTED("TODO(P3): Add implementation.");
+    if (agg_types_.size() != result->aggregates_.size()) {
+      std::cerr << "Mismatch! agg_types_: " << agg_types_.size()
+                << ", result->aggregates_: " << result->aggregates_.size() << "\n";
+    }
+    BUSTUB_ASSERT(agg_types_.size() == result->aggregates_.size(),
+                  "SimpleAggregationHashTable::CombineAggregateValues(): size not match");
+    for (size_t i = 0; i < agg_types_.size() && i < input.aggregates_.size(); ++i) {
+      auto &result_value = result->aggregates_[i];
+      const auto &input_value = input.aggregates_[i];
+
+      switch (agg_types_[i]) {
+        case AggregationType::CountStarAggregate:
+          result_value = result_value.Add(ValueFactory::GetIntegerValue(1));
+          break;
+        case AggregationType::CountAggregate:
+          if (result_value.IsNull()) {
+            result_value = ValueFactory::GetIntegerValue(0);
+          }
+          if (input_value.IsNull()) {
+            break;
+          }
+          result_value = result_value.Add(ValueFactory::GetIntegerValue(1));
+          break;
+        case AggregationType::SumAggregate:
+          if (input_value.IsNull()) {
+            break;
+          }
+          if (result_value.IsNull()) {
+            result_value = input_value;
+          } else {
+            result_value = result_value.Add(input_value);
+          }
+          break;
+        case AggregationType::MinAggregate:
+          if (input_value.IsNull()) {
+            break;
+          }
+          if (result_value.IsNull()) {
+            result_value = input_value;
+          } else {
+            result_value = result_value.Min(input_value);
+          }
+          break;
+        case AggregationType::MaxAggregate:
+          if (input_value.IsNull()) {
+            break;
+          }
+          if (result_value.IsNull()) {
+            result_value = input_value;
+          } else {
+            result_value = result_value.Max(input_value);
+          }
+          break;
+        default:
+          throw std::runtime_error("invalid agg_type");
+          break;
+      }
+    }
   }
 
   /**
@@ -189,9 +249,12 @@ class AggregationExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   /** Simple aggregation hash table */
-  // TODO(Student): Uncomment SimpleAggregationHashTable aht_;
+  SimpleAggregationHashTable aht_;
 
   /** Simple aggregation hash table iterator */
-  // TODO(Student): Uncomment SimpleAggregationHashTable::Iterator aht_iterator_;
+  SimpleAggregationHashTable::Iterator aht_iterator_;
+
+  bool is_fetch_done_{false};
+  bool is_empty_and_no_group_by_done_{false};
 };
 }  // namespace bustub
