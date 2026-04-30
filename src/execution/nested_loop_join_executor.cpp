@@ -76,12 +76,12 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
     if (!is_inner_tuples_constructed_) {
       right_executor_->Init();
       inner_tuples_.clear();
+      inner_tuples_.reserve(batch_size);
       inner_iter_ = inner_tuples_.cend();
       std::vector<Tuple> buffer;
       buffer.reserve(batch_size);
       std::vector<bustub::RID> placeholder;
       while (right_executor_->Next(&buffer, &placeholder, batch_size)) {
-        inner_tuples_.reserve(inner_tuples_.size() + buffer.size());
         for (auto &value : buffer) {
           inner_tuples_.push_back(std::move(value));
         }
