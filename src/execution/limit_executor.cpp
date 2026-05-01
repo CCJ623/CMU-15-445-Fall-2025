@@ -23,12 +23,13 @@ namespace bustub {
  */
 LimitExecutor::LimitExecutor(ExecutorContext *exec_ctx, const LimitPlanNode *plan,
                              std::unique_ptr<AbstractExecutor> &&child_executor)
-    : AbstractExecutor(exec_ctx) {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
-}
+    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
 
 /** Initialize the limit */
-void LimitExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+void LimitExecutor::Init() {
+  child_executor_->Init();
+  emitted_count_ = 0;
+}
 
 /**
  * Yield the next tuple batch from the limit.
@@ -39,7 +40,29 @@ void LimitExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
  */
 auto LimitExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch,
                          size_t batch_size) -> bool {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
+  tuple_batch->clear();
+  rid_batch->clear();
+
+  if (emitted_count_ >= plan_->GetLimit()) {
+    return false;
+  }
+
+  // Ask the child for a batch of tuples
+  if (!child_executor_->Next(tuple_batch, rid_batch, batch_size)) {
+    return false;
+  }
+
+  size_t remaining_limit = plan_->GetLimit() - emitted_count_;
+
+  // If the batch contains more tuples than the remaining limit, truncate it
+  if (tuple_batch->size() > remaining_limit) {
+    tuple_batch->resize(remaining_limit);
+    rid_batch->resize(remaining_limit);
+  }
+
+  emitted_count_ += tuple_batch->size();
+
+  return !tuple_batch->empty();
 }
 
 }  // namespace bustub
