@@ -23,7 +23,54 @@ namespace bustub {
 TupleComparator::TupleComparator(std::vector<OrderBy> order_bys) : order_bys_(std::move(order_bys)) {}
 
 /** TODO(P3): Implement the comparison method */
-auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool { return false; }
+auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool {
+  const auto &key_a = entry_a.first;
+  const auto &key_b = entry_b.first;
+
+  for (size_t i = 0; i < order_bys_.size(); ++i) {
+    const auto &val_a = key_a[i];
+    const auto &val_b = key_b[i];
+
+    OrderByType order_type = std::get<0>(order_bys_[i]);
+    OrderByNullType null_order = std::get<1>(order_bys_[i]);
+
+    // both NULL
+    if (val_a.IsNull() && val_b.IsNull()) {
+      continue;
+    }
+
+    // one is NULL
+    if (val_a.IsNull() || val_b.IsNull()) {
+      bool nulls_first = false;
+      if (null_order == OrderByNullType::NULLS_FIRST) {
+        nulls_first = true;
+      } else if (null_order == OrderByNullType::NULLS_LAST) {
+        nulls_first = false;
+      } else {
+        // default
+        nulls_first = !(order_type == OrderByType::DESC);
+      }
+
+      if (val_a.IsNull()) {
+        return nulls_first;
+      }
+
+      return !nulls_first;
+    }
+
+    // no NULL
+    if (val_a.CompareEquals(val_b) == CmpBool::CmpTrue) {
+      continue;
+    }
+    if (order_type == OrderByType::ASC || order_type == OrderByType::DEFAULT) {
+      return val_a.CompareLessThan(val_b) == CmpBool::CmpTrue;
+    }
+    if (order_type == OrderByType::DESC) {
+      return val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue;
+    }
+  }
+  return false;
+}
 
 /**
  * Generate sort key for a tuple based on the order by expressions.
@@ -31,7 +78,12 @@ auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entr
  * TODO(P3): Implement this method.
  */
 auto GenerateSortKey(const Tuple &tuple, const std::vector<OrderBy> &order_bys, const Schema &schema) -> SortKey {
-  return {};
+  SortKey sort_key;
+  sort_key.reserve(order_bys.size());
+  for (const auto &order_by : order_bys) {
+    sort_key.push_back(std::get<2>(order_by)->Evaluate(&tuple, schema));
+  }
+  return sort_key;
 }
 
 /**
