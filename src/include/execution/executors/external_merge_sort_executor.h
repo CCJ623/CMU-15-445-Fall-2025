@@ -79,14 +79,15 @@ class MergeSortRun {
      * next sort page.
      */
     auto operator++() -> Iterator & {
-      if (iter_ == page_end_iter_) {
-        BUSTUB_ASSERT(page_index_ + 1 < run_->GetPageCount(), "MergeSortRun::operator++(): ++ end iter");
+      BUSTUB_ASSERT(IsValid(), "MergeSortRun::operator++(): ++ invalid iter");
+      BUSTUB_ASSERT(iter_ != page_end_iter_, "MergeSortRun::operator++(): ++ end iter");
+
+      ++iter_;
+      if (iter_ == page_end_iter_ && page_index_ + 1 < run_->GetPageCount()) {
         ++page_index_;
         guard_ = run_->bpm_->CheckedReadPage(run_->pages_[page_index_]);
         iter_ = guard_->As<IntermediateResultPage>()->Begin();
         page_end_iter_ = guard_->As<IntermediateResultPage>()->End();
-      } else {
-        ++iter_;
       }
       return *this;
     }
@@ -114,11 +115,13 @@ class MergeSortRun {
     // explicit Iterator(const MergeSortRun *run) : run_(run) {}
     Iterator(const MergeSortRun *run, ReadPageGuard &&guard, size_t page_index, IntermediateResultPage::Iterator iter,
              IntermediateResultPage::Iterator page_end_iter)
-        : run_(run), guard_(std::move(guard)), page_index_(page_index), iter_(iter) {}
+        : run_(run), guard_(std::move(guard)), page_index_(page_index), iter_(iter), page_end_iter_(page_end_iter) {}
 
     Iterator(const MergeSortRun *run, ReadPageGuard &&guard, size_t page_index)
         : Iterator(run, std::forward<ReadPageGuard>(guard), page_index, guard.As<IntermediateResultPage>()->Begin(),
                    guard.As<IntermediateResultPage>()->End()) {}
+
+    auto IsValid() const -> bool { return guard_.has_value(); }
 
     /** The sorted run that the iterator is iterating on. */
     const MergeSortRun *run_{nullptr};
