@@ -75,21 +75,23 @@ auto ExternalMergeSortExecutor<K>::Next(std::vector<bustub::Tuple> *tuple_batch,
         if (IntermediateResultPage::DATA_SIZE < sum_tuples_length) {
           // buffer fullfill a page, sort tuples and create a new page to store tuples
           std::sort(sort_entries_buffer.begin(), sort_entries_buffer.end(), cmp_);
-          auto page_id = bpm->NewPage();
-          BUSTUB_ASSERT(page_id != INVALID_PAGE_ID, "ExternalMergeSortExecutor: Out of memory");
-          auto guard = bpm->CheckedWritePage(page_id);
-          auto &page = *guard->AsMut<IntermediateResultPage>();
-          page.Init();
-          auto iter = sort_entries_buffer.begin();
-          for (; iter != sort_entries_buffer.end() &&
-                 page.FreeSpaceForTuple() >= static_cast<int>(iter->second.GetLength());
-               ++iter) {
-            page.PushBackTuple(iter->second);
-            sum_tuples_length -= iter->second.GetLength();
-          }
-          runs.push_back(MergeSortRun{std::vector<page_id_t>{guard->GetPageId()}, bpm});
-          // truncate buffer
-          sort_entries_buffer.erase(sort_entries_buffer.begin(), iter);
+          do {
+            auto page_id = bpm->NewPage();
+            BUSTUB_ASSERT(page_id != INVALID_PAGE_ID, "ExternalMergeSortExecutor: Out of memory");
+            auto guard = bpm->CheckedWritePage(page_id);
+            auto &page = *guard->AsMut<IntermediateResultPage>();
+            page.Init();
+            auto iter = sort_entries_buffer.begin();
+            for (; iter != sort_entries_buffer.end() &&
+                   page.FreeSpaceForTuple() >= static_cast<int>(iter->second.GetLength());
+                 ++iter) {
+              page.PushBackTuple(iter->second);
+              sum_tuples_length -= iter->second.GetLength();
+            }
+            runs.push_back(MergeSortRun{std::vector<page_id_t>{guard->GetPageId()}, bpm});
+            // truncate buffer
+            sort_entries_buffer.erase(sort_entries_buffer.begin(), iter);
+          } while (IntermediateResultPage::DATA_SIZE < sum_tuples_length);
         }
 
         sum_tuples_length += tuple.GetLength();
@@ -101,13 +103,23 @@ auto ExternalMergeSortExecutor<K>::Next(std::vector<bustub::Tuple> *tuple_batch,
     if (!sort_entries_buffer.empty()) {
       // deal with remain tuples
       std::sort(sort_entries_buffer.begin(), sort_entries_buffer.end(), cmp_);
-      auto guard = bpm->CheckedWritePage(bpm->NewPage());
-      auto &page = *guard->AsMut<IntermediateResultPage>();
-      page.Init();
-      for (const auto &sort_entry : sort_entries_buffer) {
-        page.PushBackTuple(sort_entry.second);
-      }
-      runs.push_back(MergeSortRun{std::vector<page_id_t>{guard->GetPageId()}, bpm});
+      do {
+        auto page_id = bpm->NewPage();
+        BUSTUB_ASSERT(page_id != INVALID_PAGE_ID, "ExternalMergeSortExecutor: Out of memory");
+        auto guard = bpm->CheckedWritePage(page_id);
+        auto &page = *guard->AsMut<IntermediateResultPage>();
+        page.Init();
+        auto iter = sort_entries_buffer.begin();
+        for (; iter != sort_entries_buffer.end() &&
+               page.FreeSpaceForTuple() >= static_cast<int>(iter->second.GetLength());
+             ++iter) {
+          page.PushBackTuple(iter->second);
+          sum_tuples_length -= iter->second.GetLength();
+        }
+        runs.push_back(MergeSortRun{std::vector<page_id_t>{guard->GetPageId()}, bpm});
+        // truncate buffer
+        sort_entries_buffer.erase(sort_entries_buffer.begin(), iter);
+      } while (IntermediateResultPage::DATA_SIZE < sum_tuples_length);
     }
 
     // external merge sort
