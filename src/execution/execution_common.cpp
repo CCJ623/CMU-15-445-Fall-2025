@@ -14,6 +14,7 @@
 
 #include "catalog/catalog.h"
 #include "common/macros.h"
+#include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
 #include "fmt/core.h"
 #include "storage/table/table_heap.h"
@@ -22,11 +23,7 @@ namespace bustub {
 
 TupleComparator::TupleComparator(std::vector<OrderBy> order_bys) : order_bys_(std::move(order_bys)) {}
 
-/** TODO(P3): Implement the comparison method */
-auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool {
-  const auto &key_a = entry_a.first;
-  const auto &key_b = entry_b.first;
-
+auto TupleComparator::operator()(const SortKey &key_a, const SortKey &key_b) const -> bool {
   for (size_t i = 0; i < order_bys_.size(); ++i) {
     const auto &val_a = key_a[i];
     const auto &val_b = key_b[i];
@@ -70,6 +67,14 @@ auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entr
     }
   }
   return false;
+}
+
+/** TODO(P3): Implement the comparison method */
+auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool {
+  const auto &key_a = entry_a.first;
+  const auto &key_b = entry_b.first;
+
+  return this->operator()(key_a, key_b);
 }
 
 /**

@@ -34,7 +34,12 @@ class TupleComparator {
  public:
   explicit TupleComparator(std::vector<OrderBy> order_bys);
 
+  auto operator()(const SortKey &key_a, const SortKey &key_b) const -> bool;
   auto operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool;
+
+  auto IsEqual(const SortKey &key_a, const SortKey &key_b) const -> bool {
+    return !operator()(key_a, key_b) && !operator()(key_b, key_a);
+  }
 
  private:
   std::vector<OrderBy> order_bys_;

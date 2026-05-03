@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -79,5 +80,10 @@ class WindowFunctionExecutor : public AbstractExecutor {
 
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  std::vector<Tuple> tuples_;
+  std::vector<Tuple>::iterator iter_;
+
+  enum class Phase : uint8_t { kBuild, kTransfer } phase_{Phase::kBuild};
 };
 }  // namespace bustub
