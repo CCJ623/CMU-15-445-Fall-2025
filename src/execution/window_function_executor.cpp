@@ -94,6 +94,32 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
       }
     }
 
+    // init sort
+    {
+      auto &window_function = plan_->window_functions_.begin()->second;
+      std::vector<OrderBy> order_by;
+      order_by.reserve(window_function.partition_by_.size() + window_function.order_by_.size());
+      for (const auto &partition : window_function.partition_by_) {
+        order_by.emplace_back(OrderByType::DEFAULT, OrderByNullType::DEFAULT, partition);
+      }
+      for (const auto &order : window_function.order_by_) {
+        order_by.push_back(order);
+      }
+
+      // sort tuples
+      // index is id
+      std::vector<SortKey> sort_keys;
+      sort_keys.reserve(buffer.size());
+      for (const auto &[tuple, id] : buffer) {
+        sort_keys.emplace_back(GenerateSortKey(tuple, order_by, child_executor_->GetOutputSchema()));
+      }
+      TupleComparator tuple_comparator{order_by};
+      std::sort(buffer.begin(), buffer.end(),
+                [&tuple_comparator, &sort_keys](const TupleWithIdType &lhs, TupleWithIdType &rhs) -> bool {
+                  return tuple_comparator(sort_keys[lhs.second], sort_keys[rhs.second]);
+                });
+    }
+
     // sort and apply window function
     // index is ID
     std::vector<std::unordered_map<uint32_t, Value>> window_function_result{buffer.size()};
@@ -292,7 +318,7 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
             }
             // put in result
             for (auto &[sort_entry, id] : sorted_tuples) {
-              window_function_result[id][column_index] = std::move(sum);
+              window_function_result[id][column_index] = sum;
             }
             break;
           }
@@ -321,7 +347,7 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
                     last = find_next_partition_with_work_function(first, work_function)) {
             for (auto iter = first; iter < last; ++iter) {
               auto id = iter->second;
-              window_function_result[id][column_index] = std::move(accumulate_sums[iter - first]);
+              window_function_result[id][column_index] = accumulate_sums[iter - first];
             }
           }
           break;
@@ -354,7 +380,7 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
             }
             // put in result
             for (auto &[sort_entry, id] : sorted_tuples) {
-              window_function_result[id][column_index] = std::move(min);
+              window_function_result[id][column_index] = min;
             }
             break;
           }
@@ -383,7 +409,7 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
                     last = find_next_partition_with_work_function(first, work_function)) {
             for (auto iter = first; iter < last; ++iter) {
               auto id = iter->second;
-              window_function_result[id][column_index] = std::move(accumulate_mins[iter - first]);
+              window_function_result[id][column_index] = accumulate_mins[iter - first];
             }
           }
           break;
@@ -416,7 +442,7 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
             }
             // put in result
             for (auto &[sort_entry, id] : sorted_tuples) {
-              window_function_result[id][column_index] = std::move(max);
+              window_function_result[id][column_index] = max;
             }
             break;
           }
@@ -445,14 +471,14 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
                     last = find_next_partition_with_work_function(first, work_function)) {
             for (auto iter = first; iter < last; ++iter) {
               auto id = iter->second;
-              window_function_result[id][column_index] = std::move(accumulate_maxs[iter - first]);
+              window_function_result[id][column_index] = accumulate_maxs[iter - first];
             }
           }
           break;
         }
         case WindowFunctionType::Rank: {
-          auto column = std::dynamic_pointer_cast<ColumnValueExpression>(window_function.function_);
-          BUSTUB_ASSERT(column != nullptr, "WindowFunctionExecutor::Next(): can not count non-column");
+          // auto column = std::dynamic_pointer_cast<ColumnValueExpression>(window_function.function_);
+          // BUSTUB_ASSERT(column != nullptr, "WindowFunctionExecutor::Next(): can not count non-column");
           size_t rank = 0;
           size_t row_count = 0;
           SortKey previous_sort_key;
