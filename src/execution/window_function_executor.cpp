@@ -154,6 +154,10 @@ auto WindowFunctionExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
       auto find_next_partition = [&sorted_tuples, &schema = child_executor_->GetOutputSchema(),
                                   &partition_by =
                                       window_function.partition_by_](decltype(sorted_tuples)::const_iterator start) {
+        BUSTUB_ASSERT(start <= sorted_tuples.cend(), "WindowFunctionExecutor::Next(): invalid iterator");
+        if (start == sorted_tuples.cend()) {
+          return start;
+        }
         auto &start_tuple = start->first.second;
         std::vector<Value> partition_keys;
         partition_keys.reserve(partition_by.size());
