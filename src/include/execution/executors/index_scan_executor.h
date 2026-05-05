@@ -24,6 +24,10 @@
 
 namespace bustub {
 
+using BPlusTreeIndexForOneIntegerColumn = BPlusTreeIndex<GenericKey<4>, IntegerValueType_BTree, GenericComparator<4>>;
+using BPlusTreeIndexIteratorForOneIntegerColumn =
+    IndexIterator<GenericKey<4>, IntegerValueType_BTree, GenericComparator<4>>;
+
 /**
  * IndexScanExecutor executes an index scan over a table.
  */

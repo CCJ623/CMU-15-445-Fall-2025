@@ -21,11 +21,64 @@
 
 #include "binder/table_ref/bound_join_ref.h"
 #include "common/config.h"
+#include "common/util/hash_util.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/hash_join_plan.h"
 #include "storage/page/intermediate_result_page.h"
 #include "storage/table/tuple.h"
+
+/** HashJoinKey represents a key in an hash join operation */
+namespace bustub {
+struct HashJoinKey {
+  HashJoinKey(const Tuple &tuple, const Schema &schema, const std::vector<AbstractExpressionRef> &expressions) {
+    for (const auto &expr : expressions) {
+      auto key = expr->Evaluate(&tuple, schema);
+      keys_.push_back(std::move(key));
+    }
+  }
+
+  /** The keys */
+  std::vector<Value> keys_;
+
+  /**
+   * Compares two hash join keys for equality.
+   * @param other the other hash join key to be compared with
+   * @return `true` if both hash join keys have equivalent keys_ expressions, `false` otherwise
+   */
+  auto operator==(const HashJoinKey &other) const -> bool {
+    for (uint32_t i = 0; i < other.keys_.size(); i++) {
+      if (keys_[i].IsNull() && other.keys_[i].IsNull()) {
+        continue;
+      }
+      if (keys_[i].IsNull() || other.keys_[i].IsNull()) {
+        return false;
+      }
+      if (keys_[i].CompareEquals(other.keys_[i]) != CmpBool::CmpTrue) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+}  // namespace bustub
+
+namespace std {
+
+/** Implements std::hash on HashJoinKey */
+template <>
+struct hash<bustub::HashJoinKey> {
+  auto operator()(const bustub::HashJoinKey &key) const -> std::size_t {
+    size_t curr_hash = 0;
+    for (const auto &key : key.keys_) {
+      if (!key.IsNull()) {
+        curr_hash = bustub::HashUtil::CombineHashes(curr_hash, bustub::HashUtil::HashValue(&key));
+      }
+    }
+    return curr_hash;
+  }
+};
+}  // namespace std
 
 namespace bustub {
 

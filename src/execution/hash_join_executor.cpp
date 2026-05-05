@@ -81,32 +81,43 @@ auto HashJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector
       std::vector<RID> child_rids;
 
       // save all guards needed, avoiding frequently flush
-      std::array<std::optional<WritePageGuard>, NUM_PARTITION> guards;
+      // std::array<std::optional<WritePageGuard>, NUM_PARTITION> guards;
       while (executor.Next(&child_tuples, &child_rids, batch_size)) {
         for (const auto &tuple : child_tuples) {
           // hash keys
           size_t pos =
               std::hash<HashJoinKey>{}({tuple, executor.GetOutputSchema(), join_key_expressions}) % partition.size();
           auto &page_id = partition[pos];
+          WritePageGuard guard;
           if (page_id == INVALID_PAGE_ID) {  // create head page
             page_id = bpm.NewPage();
             BUSTUB_ASSERT(page_id != INVALID_PAGE_ID, "HashJoinExecutor::Next(): out of memory");
-            guards[pos] = bpm.CheckedWritePage(partition[pos]);
-            BUSTUB_ASSERT(guards[pos].has_value(), "HashJoinExecutor::Next(): out of memory");
-            auto guard = &(guards[pos]);
-            auto page = (*guard)->AsMut<IntermediateResultPage>();
+            std::optional<WritePageGuard> result;
+            do {
+              result = bpm.CheckedWritePage(partition[pos]);
+            } while (!result.has_value());
+            guard = std::move(*result);
+            auto page = guard.AsMut<IntermediateResultPage>();
             page->Init();
+          } else {
+            std::optional<WritePageGuard> result;
+            do {
+              result = bpm.CheckedWritePage(partition[pos]);
+            } while (!result.has_value());
+            guard = std::move(*result);
           }
 
-          auto guard = &(guards[pos]);
-          auto page = (*guard)->AsMut<IntermediateResultPage>();
+          auto page = guard.AsMut<IntermediateResultPage>();
           if (page->FreeSpaceForTuple() < static_cast<int64_t>(tuple.GetLength())) {  // no space, new a page
             auto old_page_id = page_id;
             page_id = bpm.NewPage();
             BUSTUB_ASSERT(page_id != INVALID_PAGE_ID, "HashJoinExecutor::Next(): out of memory");
-            *guard = bpm.CheckedWritePage(page_id);
-            BUSTUB_ASSERT(guards[pos].has_value(), "HashJoinExecutor::Next(): out of memory");
-            page = (*guard)->AsMut<IntermediateResultPage>();
+            std::optional<WritePageGuard> result;
+            do {
+              result = bpm.CheckedWritePage(partition[pos]);
+            } while (!result.has_value());
+            guard = std::move(*result);
+            page = guard.AsMut<IntermediateResultPage>();
             page->Init();
             page->SetNextPageId(old_page_id);
           }
